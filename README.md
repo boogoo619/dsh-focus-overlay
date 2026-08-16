@@ -1,5 +1,7 @@
 <h1 align="center">dsh-focus-overlay</h1>
 
+<p align="center">中文 | <a href="README.en.md">English</a></p>
+
 <p align="center">
   为 DeepSeek Harness（DSH）Web GUI 提供的<b>专注模式</b>：一键全屏阅读，隐藏标题区与输入区，把 AI 的工具调用流程折叠成一句话摘要，只保留「你与 AI 的对话」本身。<br>
   文本与图片渲染复用官方原语，与聊天视图 1:1 一致。
