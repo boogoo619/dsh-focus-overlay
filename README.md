@@ -13,6 +13,15 @@
   <img src="https://badgen.net/badge/dsh/%3E%3D0.1.0-rc.5/blue" alt="dsh version">
 </p>
 
+## 功能
+
+- **全屏显示** —— 覆盖整个界面，把纵向空间全部留给对话
+- **隐藏标题栏和输入栏** —— 顶部只留一条极窄栏，底部输入区收起
+- **折叠工具调用** —— 一轮 AI 回复折叠成一句话摘要
+- **快速导航** —— 右侧节点导航条，悬停预览、点击跳转
+
+这些功能专为**小屏幕**提供更多内容呈现空间：收起常驻的标题/输入区与工具步骤，让有限的屏幕尽可能多地展示对话。
+
 ## 效果
 
 **关闭 —— 普通聊天视图**
@@ -46,12 +55,6 @@
 | 文件提及 | 接 `chatFileMentions`，内联代码命中真实文件时变成可点链接 |
 | i18n | 中 / 英文案，跟随界面语言 |
 | 设置页 | 导航条开关、打开定位策略、文字区宽度，持久化到 `localStorage` |
-
-## 为什么是全屏遮罩，而不是改聊天视图
-
-聊天视图的标题区、输入区、工具卡都是被自带 UI 占用的 slot：插件无法细粒度替换它们，也拿不到聊天视图的渲染器来复用——这正是 `dsh-focus-chat` 另起独立标签页的原因。
-
-本插件换一条路：用一个**全屏 `shell.overlay`** 覆盖整个界面，把「隐藏标题/输入区」和「折叠工具调用」都交给自己的渲染面完成。这样既不触碰自带 DOM，又能彻底控制显示内容，还顺带解决了"精确保留聊天滚动位置"（bundle 插件有完整 DOM 访问权，可按 `seq` 对齐到同一条消息）。
 
 ## 安装
 
@@ -105,28 +108,6 @@ dsh plugin --profile web add ./dsh-focus-overlay-0.1.0.tgz        # tarball
 | 显示右侧导航条 | 开关导航圆点（默认开） |
 | 打开时保留聊天位置 | 进入时定位到当前阅读位置；关闭则定位到最新（默认开） |
 | 文字区宽度 | 480–1200px 滑块，调整阅读列宽（默认 760px） |
-
-## 开发
-
-```sh
-npm install
-npm run build   # 产出 lib/index.mjs（Node half）+ lib/client.js（浏览器 bundle）
-```
-
-构建产物 `lib/` 不入库；npm 发布与 git 安装时由 `prepare` 脚本现场构建。
-
-## 目录结构
-
-```
-src/index.mjs            Node half（空 apply）
-src/client/index.ts      client apply：注入样式、注册 overlay / 按钮 / 设置页
-src/client/FocusView.tsx 核心组件（MarkdownText/MessageText、图片、摘要、导航条）
-src/client/styles.ts     包内样式（仅 --dsw-* token）
-src/client/settings.ts   偏好（localStorage）
-src/client/locales.ts    中/英词典
-cordis.patch.yml         组合层补丁
-tsdown.config.ts         双 half 构建（Node ESM + 浏览器 __ModuleLoader__ CJS）
-```
 
 ## 许可
 
