@@ -15,9 +15,13 @@
 
 ## 效果
 
-| 关闭 —— 普通聊天视图 | 开启 —— 专注模式 |
-| --- | --- |
-| ![关闭：普通聊天视图](screenshots/before.png) | ![开启：专注模式](screenshots/after.png) |
+**关闭 —— 普通聊天视图**
+
+![关闭：普通聊天视图](screenshots/before.png)
+
+**开启 —— 专注模式**
+
+![开启：专注模式](screenshots/after.png)
 
 <!-- 截图请放到 screenshots/ 目录：
      - before.png —— 普通聊天视图（含标题区/输入区/工具卡）

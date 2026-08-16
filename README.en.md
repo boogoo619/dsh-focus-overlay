@@ -17,9 +17,13 @@
 
 ## Screenshots
 
-| Off — the normal chat view | On — focus mode |
-| --- | --- |
-| ![Off: the normal chat view](screenshots/before.png) | ![On: focus mode](screenshots/after.png) |
+**Off — the normal chat view**
+
+![Off: the normal chat view](screenshots/before.png)
+
+**On — focus mode**
+
+![On: focus mode](screenshots/after.png)
 
 <!-- Drop your screenshots into screenshots/:
      - before.png — the normal chat view (header / composer / tool cards)
