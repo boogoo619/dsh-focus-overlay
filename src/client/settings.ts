@@ -1,0 +1,39 @@
+import { useEffect, useState } from 'react'
+
+/** User preferences, persisted to localStorage (bundle plugins have full browser access). */
+export interface FocusPrefs {
+  navbar: boolean
+  scroll: 'preserve' | 'bottom'
+  width: number
+}
+
+const KEY = 'dsh-focus-overlay:prefs'
+const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760 }
+
+function load(): FocusPrefs {
+  try {
+    const raw = localStorage.getItem(KEY)
+    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }
+  } catch { /* ignore */ }
+  return { ...DEFAULTS }
+}
+
+let prefs: FocusPrefs = load()
+const listeners: Array<() => void> = []
+
+export const prefsStore = {
+  get: (): FocusPrefs => prefs,
+  set: (next: FocusPrefs) => {
+    prefs = next
+    try { localStorage.setItem(KEY, JSON.stringify(next)) } catch { /* ignore */ }
+    for (const l of listeners) l()
+  },
+  update: (patch: Partial<FocusPrefs>) => prefsStore.set({ ...prefs, ...patch }),
+  subscribe: (l: () => void) => { listeners.push(l); return () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1) } },
+}
+
+export function usePrefs(): FocusPrefs {
+  const [p, setP] = useState<FocusPrefs>(prefsStore.get)
+  useEffect(() => prefsStore.subscribe(() => setP(prefsStore.get)), [])
+  return p
+}

@@ -1,0 +1,4 @@
+# dsh-focus-overlay bundle: mount the Node half (empty apply — behaviour is all in the client bundle).
+- insert:
+    - id: dsh-focus-overlay
+      name: 'dsh-focus-overlay'

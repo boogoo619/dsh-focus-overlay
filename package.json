@@ -1,0 +1,57 @@
+{
+  "name": "dsh-focus-overlay",
+  "version": "0.1.0",
+  "description": "Focus Mode for the dsh web GUI: a full-screen reading overlay that hides chrome and folds the AI tool-call flow into summaries, reusing the official Markdown / image primitives.",
+  "type": "module",
+  "main": "lib/index.mjs",
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.mjs"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "engines": {
+    "node": ">=22.19.0",
+    "dsh": ">=0.1.0-rc.5"
+  },
+  "scripts": {
+    "build": "tsdown --config ./tsdown.config.ts",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "focus-mode",
+    "bundle"
+  ],
+  "devDependencies": {
+    "tsdown": "0.22.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/boogoo619/dsh-focus-overlay.git"
+  },
+  "license": "MIT"
+}
