@@ -21,6 +21,7 @@
 - **Hide the header and composer** — a thin top bar remains, the input area is tucked away
 - **Fold tool calls** — an assistant turn collapses into a one-line summary
 - **Quick navigation** — a right-side node navbar with hover preview and click-to-jump
+- **Auto-focus & reminders** — after a reply completes, optionally auto-enter focus at your question; while in focus, get a toast for a new reply or when the AI is waiting on you
 
 These features are designed to give **small screens** more content space: tucking away the persistent header/composer and tool steps lets the conversation use as much of the screen as possible.
 
@@ -57,6 +58,8 @@ Once in focus mode, an assistant turn no longer shows every step — it folds in
 | File mentions | Wires `chatFileMentions`, turning inline-code tokens that name real files into clickable links |
 | i18n | Chinese / English copy, follows the UI language |
 | Settings page | Navbar toggle, open-position strategy, text-area width — persisted to `localStorage` |
+| Auto-enter focus | After a reply **completes normally**, auto-open focus at your question; abnormal endings (stop / error / max-tokens / interrupt) never fire |
+| Reply / waiting reminders | In focus, a "New reply ready + View" toast on completion; an "AI is waiting for your reply + Reply" toast on a question/approval, auto-cleared once answered |
 
 ## Install
 
@@ -110,6 +113,7 @@ Sidebar "Settings → Focus Mode":
 | Show right-side navbar | Toggle the nav dots (default on) |
 | Preserve chat position on open | Open at your current reading position; off opens at the latest (default on) |
 | Text width | 480–1200px slider for the reading column (default 760px) |
+| Auto-enter focus mode when a reply completes | On a normal completion: auto-open at your question when closed, or a "New reply ready" toast when open; an "AI is waiting" toast on a question/approval (default off) |
 
 ## License
 

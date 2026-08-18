@@ -2,15 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownText, MessageText, Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore } from './settings'
 import type { FocusTranslate } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, hasPendingInteraction } from './model'
 
 // ---- shared focus state (module scope; the overlay and the header toggle read it) ----
 let focusOn = false
 let pendingAnchorKey: string | null = null
+let pendingAutoSeq: number | null = null
+let donePing = 0
 const focusListeners: Array<() => void> = []
-const focusStore = {
+const notify = () => { for (const l of focusListeners) l() }
+export const focusStore = {
   get: () => focusOn,
-  set: (v: boolean) => { focusOn = !!v; for (const l of focusListeners) l() },
+  set: (v: boolean) => { focusOn = !!v; notify() },
   subscribe: (l: () => void) => { focusListeners.push(l); return () => { const i = focusListeners.indexOf(l); if (i >= 0) focusListeners.splice(i, 1) } },
   // Capture the topmost visible user/steering row's chat anchor key so the
   // overlay can open at the same message (precise scroll preservation).
@@ -31,10 +34,24 @@ const focusStore = {
     } catch { /* ignore */ }
   },
   consumeAnchorKey: () => { const k = pendingAnchorKey; pendingAnchorKey = null; return k },
+  // Auto-focus target: the seq of the user message that started the just-finished
+  // turn (consumed by the overlay's mount effect to scroll to the question).
+  setAutoAnchor: (seq: number | null) => { pendingAutoSeq = seq },
+  consumeAutoSeq: () => { const s = pendingAutoSeq; pendingAutoSeq = null; return s },
+  // One-shot "new reply ready" ping (shown only while focus is already open;
+  // cleared when the overlay closes so it never re-shows on the next open).
+  getDonePing: () => donePing,
+  notifyDone: () => { donePing++; notify() },
+  clearDonePing: () => { donePing = 0 },
 }
 function useFocus(): boolean {
   const [v, setV] = useState<boolean>(focusStore.get)
   useEffect(() => focusStore.subscribe(() => setV(focusStore.get)), [])
+  return v
+}
+function useDonePing(): number {
+  const [v, setV] = useState<number>(focusStore.getDonePing)
+  useEffect(() => focusStore.subscribe(() => setV(focusStore.getDonePing())), [])
   return v
 }
 
@@ -136,6 +153,20 @@ function FocusContent(props: any) {
   const scrollToBottom = () => { if (bodyEl) bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'smooth' }) }
 
   useEffect(() => {
+    // Auto-focus: jump to the user question that started the just-finished turn.
+    const autoSeq = focusStore.consumeAutoSeq()
+    if (autoSeq != null) {
+      const idx = findSeqIndex(items, autoSeq)
+      if (idx >= 0) {
+        scrollToKey('fm-' + idx, false)
+        setActiveKey('fm-' + idx)
+      } else if (bodyEl) {
+        bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
+        setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
+      }
+      return
+    }
+    // Manual open: preserve the chat position captured from the underlying view.
     const anchorKey = focusStore.consumeAnchorKey()
     const seq = resolveAnchorSeq(snap && snap.chat, anchorKey)
     const idx = seq != null ? findSeqIndex(items, seq) : -1
@@ -244,6 +275,47 @@ function FocusContent(props: any) {
     )
     : null
 
+  // "AI is waiting for your reply" — a live state derived from the session's
+  // pending interactions. It shows while any question/approval is unanswered
+  // and clears by itself the moment the user answers (pending empties).
+  const waiting = hasPendingInteraction(snap)
+
+  // "New reply ready" — a one-shot ping, cleared when the overlay closes so it
+  // never re-appears on the next open.
+  const donePing = useDonePing()
+  const [showDoneNotice, setShowDoneNotice] = useState<boolean>(false)
+  useEffect(() => {
+    if (!donePing) return
+    setShowDoneNotice(true)
+    const id = setTimeout(() => setShowDoneNotice(false), 6000)
+    return () => clearTimeout(id)
+  }, [donePing])
+  useEffect(() => () => focusStore.clearDonePing(), [])
+
+  const jumpToLatestQuestion = () => {
+    const idx = lastUserIndex(items)
+    if (idx >= 0) { scrollToKey('fm-' + idx, true); setActiveKey('fm-' + idx) }
+    else scrollToBottom()
+  }
+
+  const replyNotice = waiting
+    ? (
+      <div className="fm-reply-toast">
+        <span className="fm-reply-toast-dot" />
+        <span className="fm-reply-toast-text">{t('reply.waiting')}</span>
+        <Button variant="primary" size="sm" onClick={() => focusStore.set(false)}>{t('reply.respond')}</Button>
+      </div>
+    )
+    : showDoneNotice
+      ? (
+        <div className="fm-reply-toast">
+          <span className="fm-reply-toast-dot" />
+          <span className="fm-reply-toast-text">{t('reply.ready')}</span>
+          <Button variant="primary" size="sm" onClick={() => { setShowDoneNotice(false); jumpToLatestQuestion() }}>{t('reply.view')}</Button>
+        </div>
+      )
+      : null
+
   return (
     <div className="fm-overlay" tabIndex={-1} autoFocus onKeyDown={(e) => { if (e && e.key === 'Escape') focusStore.set(false) }}>
       <div className="fm-topbar">
@@ -253,6 +325,7 @@ function FocusContent(props: any) {
       <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={handleScroll}>{body}</div>
       {nav}
       {toBottom}
+      {replyNotice}
     </div>
   )
 }
@@ -282,6 +355,10 @@ export function FocusSettings({ t }: { t: FocusTranslate }) {
       <label className="fm-setting-row">
         <input type="checkbox" checked={prefs.scroll === 'preserve'} onChange={(e) => prefsStore.update({ scroll: e.target.checked ? 'preserve' : 'bottom' })} />
         <span>{t('settings.scrollPreserve')}</span>
+      </label>
+      <label className="fm-setting-row">
+        <input type="checkbox" checked={prefs.autoFocus} onChange={(e) => prefsStore.update({ autoFocus: e.target.checked })} />
+        <span>{t('settings.autoFocus')}</span>
       </label>
       <div className="fm-setting-row">
         <span>{t('settings.width')}</span>

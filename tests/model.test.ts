@@ -7,6 +7,10 @@ import {
   buildItems,
   findSeqIndex,
   resolveAnchorSeq,
+  lastUserSeq,
+  lastUserIndex,
+  detectSettledCompletion,
+  hasPendingInteraction,
 } from '../src/client/model'
 
 // Minimal translate stub: renders the key plus the interpolated `n` so tests
@@ -122,5 +126,89 @@ describe('resolveAnchorSeq', () => {
     expect(resolveAnchorSeq({ nodes: { get: () => undefined } }, 'k')).toBe(null)
     expect(resolveAnchorSeq({ nodes: { get: () => ({ data: {} }) } }, 'k')).toBe(null)
     expect(resolveAnchorSeq(null, null)).toBe(null)
+  })
+})
+
+describe('lastUserSeq', () => {
+  it('returns the last user seq and prefers user over steering', () => {
+    const nodes = [
+      { kind: 'user', seq: 1 },
+      { kind: 'steering', seq: 5 },
+      { kind: 'user', seq: 10 },
+      { kind: 'steering', seq: 20 },
+    ]
+    expect(lastUserSeq(nodes)).toBe(10)
+  })
+  it('falls back to steering when no user message exists', () => {
+    expect(lastUserSeq([{ kind: 'steering', seq: 7 }])).toBe(7)
+  })
+  it('returns null when neither user nor steering is present', () => {
+    expect(lastUserSeq([{ kind: 'assistant', seq: 1 }])).toBe(null)
+    expect(lastUserSeq([])).toBe(null)
+    expect(lastUserSeq(undefined as any)).toBe(null)
+  })
+})
+
+describe('lastUserIndex', () => {
+  const items = [
+    { kind: 'user', text: 'a', seq: 1 },
+    { kind: 'steering', text: 'b', seq: 2 },
+    { kind: 'user', text: 'c', seq: 3 },
+    { kind: 'assistant', blocks: [], seq: 4, turn: 1, step: 1 },
+  ] as any
+  it('returns the last user item index', () => {
+    expect(lastUserIndex(items)).toBe(2)
+  })
+  it('returns -1 when no user item exists', () => {
+    expect(lastUserIndex([{ kind: 'assistant', blocks: [], seq: 1, turn: 1, step: 1 }] as any)).toBe(-1)
+  })
+})
+
+describe('detectSettledCompletion', () => {
+  it('accepts a finalized, non-interrupted assistant as a normal completion', () => {
+    const snap = {
+      nodes: [
+        { kind: 'user', seq: 1 },
+        { kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' },
+      ],
+    }
+    expect(detectSettledCompletion(snap)).toEqual({ completed: true, anchorSeq: 1 })
+  })
+  it('rejects an interrupted (stopped) assistant', () => {
+    expect(detectSettledCompletion({ nodes: [{ kind: 'assistant', seq: 2, turn: 1, step: 1, interrupted: true }] }).completed).toBe(false)
+  })
+  it('rejects turn-error and turn-max-tokens terminals', () => {
+    expect(detectSettledCompletion({ nodes: [{ kind: 'assistant', seq: 1, turn: 1, step: 1 }, { kind: 'turn-error', seq: 2, message: 'boom' }] }).completed).toBe(false)
+    expect(detectSettledCompletion({ nodes: [{ kind: 'turn-max-tokens', seq: 2 }] }).completed).toBe(false)
+  })
+  it('rejects when no terminal node exists', () => {
+    expect(detectSettledCompletion({ nodes: [{ kind: 'user', seq: 1 }] }).completed).toBe(false)
+    expect(detectSettledCompletion({ nodes: [] }).completed).toBe(false)
+    expect(detectSettledCompletion(undefined).completed).toBe(false)
+  })
+  it('skips trailing non-terminal nodes (context after assistant)', () => {
+    const snap = {
+      nodes: [
+        { kind: 'user', seq: 1 },
+        { kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' },
+        { kind: 'context', seq: 3 },
+      ],
+    }
+    expect(detectSettledCompletion(snap)).toEqual({ completed: true, anchorSeq: 1 })
+  })
+  it('anchorSeq is null when no user/steering started the turn', () => {
+    const snap = { nodes: [{ kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' }] }
+    expect(detectSettledCompletion(snap)).toEqual({ completed: true, anchorSeq: null })
+  })
+})
+
+describe('hasPendingInteraction', () => {
+  it('is true while any pending interaction exists, false once answered', () => {
+    expect(hasPendingInteraction({ pending: [{ key: 'q1' }] })).toBe(true)
+    expect(hasPendingInteraction({ pending: [{ key: 'a' }, { key: 'b' }] })).toBe(true)
+    expect(hasPendingInteraction({ pending: [] })).toBe(false)
+    expect(hasPendingInteraction({})).toBe(false)
+    expect(hasPendingInteraction(undefined)).toBe(false)
+    expect(hasPendingInteraction(null)).toBe(false)
   })
 })

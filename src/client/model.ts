@@ -129,3 +129,68 @@ export function findSeqIndex(items: FocusItem[], seq: number): number {
   }
   return -1
 }
+
+/** Seq of the message that started the latest turn: the last `user` node, or a
+ *  `steering` node as a fallback when no user message exists (e.g. a
+ *  command-only session). Returns null when neither is present. */
+export function lastUserSeq(nodes: any[]): number | null {
+  let user: number | null = null
+  let steering: number | null = null
+  for (const n of nodes || []) {
+    if (!n || typeof n.seq !== 'number') continue
+    if (n.kind === 'user') user = n.seq
+    else if (n.kind === 'steering') steering = n.seq
+  }
+  return user != null ? user : steering
+}
+
+/** Index of the last user item in an already-built focus list (toast "View"
+ *  jump target); -1 when absent. */
+export function lastUserIndex(items: FocusItem[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].kind === 'user') return i
+  }
+  return -1
+}
+
+export interface SettledOutcome {
+  /** A reply completed normally (not stopped / errored / capped / interrupted). */
+  completed: boolean
+  /** Seq of the user message that started this turn, or null when unknown. */
+  anchorSeq: number | null
+}
+
+/**
+ * Decide whether an already-settled conversation snapshot (`running === false`)
+ * ends in a *normal* completed reply, and which user message started it.
+ *
+ * The caller owns the `running true → false` edge; this is the pure
+ * "is the tail a finished reply?" predicate: it walks backwards to the first
+ * turn-terminating node (`assistant` / `turn-error` / `turn-max-tokens`), then
+ * accepts only a finalized, non-interrupted assistant node.
+ */
+export function detectSettledCompletion(snap: any): SettledOutcome {
+  const nodes = snap && snap.nodes ? snap.nodes : []
+  let terminal: any = null
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i]
+    if (!n) continue
+    if (n.kind === 'assistant' || n.kind === 'turn-error' || n.kind === 'turn-max-tokens') {
+      terminal = n
+      break
+    }
+  }
+  if (!terminal || terminal.kind !== 'assistant' || terminal.interrupted) {
+    return { completed: false, anchorSeq: null }
+  }
+  return { completed: true, anchorSeq: lastUserSeq(nodes) }
+}
+
+/** True while the session has a pending interaction — the AI is blocked waiting
+ *  for the user (to answer a question or approve an action). It stays true for
+ *  the whole wait (`running` remains true throughout) and clears as soon as the
+ *  user answers, so it is the live signal for "questions still unanswered". */
+export function hasPendingInteraction(snap: any): boolean {
+  const pending = snap && snap.pending
+  return Array.isArray(pending) && pending.length > 0
+}

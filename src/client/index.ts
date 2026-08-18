@@ -6,9 +6,11 @@
  * components and the conversation service's image resolver.
  */
 import { createElement } from 'react'
-import { FocusOverlay, FocusSettings, FocusToggle } from './FocusView'
+import { FocusOverlay, FocusSettings, FocusToggle, focusStore } from './FocusView'
 import { FOCUS_CSS } from './styles'
 import { zh, en } from './locales'
+import { prefsStore } from './settings'
+import { detectSettledCompletion } from './model'
 
 const NS = 'focus'
 
@@ -33,6 +35,56 @@ export default {
     const workspaces = ctx.workspaces
     const conversation = ctx.get('conversation')
     const chatFileMentions = ctx.get('chatFileMentions')
+
+    // Auto-focus: watch the *current* session's running bit. When a reply
+    // settles normally (running true → false + finalized, non-interrupted
+    // assistant node), either open focus mode scrolled to the question, or —
+    // if focus is already open — raise a one-shot "new reply ready" reminder.
+    // Abnormal endings (stop / error / max-tokens / interrupt) never fire.
+    //
+    // The "AI is waiting for your reply" case (ask_user_question / approval) is
+    // NOT handled here: it is a live state (`snapshot.pending`), not an event,
+    // so the overlay renders it directly and it clears the moment the user
+    // answers — no edge detection needed.
+    ctx.effect(() => {
+      let currentId: any = undefined
+      let unsubSession: (() => void) | null = null
+      let prevRunning = false
+
+      const watch = (id: any) => {
+        if (unsubSession) { unsubSession(); unsubSession = null }
+        prevRunning = false
+        if (id == null) return
+        const binding = sessions.binding(id)
+        if (!binding) return
+        const face = binding.session
+        const onSnap = () => {
+          const snap = face.getSnapshot()
+          if (!snap) return
+          const running = !!snap.running
+          if (prevRunning && !running) {
+            const outcome = detectSettledCompletion(snap)
+            if (outcome.completed && prefsStore.get().autoFocus) {
+              if (focusStore.get()) focusStore.notifyDone()
+              else { focusStore.setAutoAnchor(outcome.anchorSeq); focusStore.set(true) }
+            }
+          }
+          prevRunning = running
+        }
+        onSnap()
+        unsubSession = face.subscribe(onSnap)
+      }
+
+      const onList = () => {
+        const ls = sessions.list.getSnapshot()
+        const next = ls ? ls.current : undefined
+        if (next !== currentId) { currentId = next; watch(next) }
+      }
+      onList()
+      const unsubList = sessions.list.subscribe(onList)
+
+      return () => { if (unsubList) unsubList(); if (unsubSession) unsubSession() }
+    })
 
     ctx.slots.inject('shell.overlay', () => ctx.slots.register(
       { name: 'shell.overlay', id: 'focus-mode-overlay', order: 1000 },

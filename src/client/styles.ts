@@ -27,6 +27,9 @@ export const FOCUS_CSS = `
 .fm-nav-dot:hover .fm-nav-tip{display:block}
 .fm-tobottom-wrap{position:absolute;left:50%;transform:translateX(-50%);bottom:18px;z-index:2;pointer-events:none}
 .fm-tobottom{pointer-events:auto;border-radius:100px;min-width:34px;height:34px;padding:0 10px}
+.fm-reply-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:64px;z-index:2;display:flex;align-items:center;gap:10px;background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:100px;padding:8px 8px 8px 16px;box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:13px}
+.fm-reply-toast-dot{width:8px;height:8px;border-radius:999px;background:var(--dsw-static-deepseek-500,#4176e6);flex:0 0 auto}
+.fm-reply-toast-text{white-space:nowrap}
 .fm-settings{display:flex;flex-direction:column;gap:16px;max-width:560px;padding:8px 0}
 .fm-setting-row{display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;user-select:none}
 .fm-setting-row input[type="checkbox"]{width:16px;height:16px;cursor:pointer}

@@ -5,10 +5,12 @@ export interface FocusPrefs {
   navbar: boolean
   scroll: 'preserve' | 'bottom'
   width: number
+  /** When enabled, a normally-completed reply auto-opens focus mode (or, if already open, shows a "new reply" reminder). */
+  autoFocus: boolean
 }
 
 const KEY = 'dsh-focus-overlay:prefs'
-const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760 }
+const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760, autoFocus: false }
 
 function load(): FocusPrefs {
   try {
