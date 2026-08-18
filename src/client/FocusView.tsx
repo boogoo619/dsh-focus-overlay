@@ -212,15 +212,20 @@ function FocusContent(props: any) {
     body = <div className="fm-inner" style={{ maxWidth: prefs.width }}>{kids}</div>
   }
 
+  const activeIndex = activeKey ? navKeys.indexOf(activeKey) : -1
+  const navHeight = (navKeys.length - 1) * 14 + 22
+  const dotTop = (i: number) => i * 14 + 11 + (i < activeIndex ? -7 : i > activeIndex ? 7 : 0)
+
   const nav = (prefs.navbar && navKeys.length >= 2)
     ? (
-      <div className="fm-nav">
-        {navKeys.map((k) => (
+      <div className="fm-nav" style={{ height: navHeight }}>
+        {navKeys.map((k, i) => (
           <button
             key={k}
             type="button"
             aria-label={navPreviews[k]}
             className={'fm-nav-dot' + (activeKey === k ? ' fm-nav-dot-active' : '')}
+            style={{ top: dotTop(i) }}
             onClick={() => scrollToKey(k, true)}
           >
             <span className="fm-nav-dot-core" />
