@@ -223,6 +223,7 @@ function FocusContent(props: any) {
             className={'fm-nav-dot' + (activeKey === k ? ' fm-nav-dot-active' : '')}
             onClick={() => scrollToKey(k, true)}
           >
+            <span className="fm-nav-dot-core" />
             <span className="fm-nav-tip">{navPreviews[k]}</span>
           </button>
         ))}
