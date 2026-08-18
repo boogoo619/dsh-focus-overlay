@@ -15,7 +15,7 @@ export const FOCUS_CSS = `
 .fm-error{color:var(--dsw-alias-state-error-primary,#d23);font-size:13px;white-space:pre-wrap}
 .fm-running{color:var(--dsw-alias-label-secondary,#888);font-size:13px;margin:6px 0 16px}
 .fm-empty{color:var(--dsw-alias-label-secondary,#888);padding:48px 16px;text-align:center}
-.fm-nav{position:absolute;right:0;top:50%;transform:translateY(-50%);display:block;z-index:2;pointer-events:auto;padding:0 16px 0 4px;transition:transform .18s ease}
+.fm-nav{position:absolute;right:20px;top:50%;transform:translateY(-50%);display:block;width:16px;z-index:2;pointer-events:auto;transition:transform .18s ease}
 .fm-nav:hover{transform:translateY(-50%) translateX(-6px)}
 .fm-nav-dot{position:absolute;left:50%;transform:translate(-50%,-50%);cursor:pointer;background:transparent;border:0;padding:0;width:16px;height:auto;display:flex;align-items:center;justify-content:center;transition:top .22s ease}
 .fm-nav-dot::after{content:'';position:absolute;inset:-5px -8px}
