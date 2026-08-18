@@ -37,7 +37,8 @@
   },
   "scripts": {
     "build": "tsdown --config ./tsdown.config.ts",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test": "vitest run"
   },
   "keywords": [
     "dsh",
@@ -47,7 +48,8 @@
     "bundle"
   ],
   "devDependencies": {
-    "tsdown": "0.22.2"
+    "tsdown": "0.22.2",
+    "vitest": "^4.1.10"
   },
   "repository": {
     "type": "git",
