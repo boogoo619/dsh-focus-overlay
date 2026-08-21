@@ -110,8 +110,20 @@ export default {
       () => createElement(FocusToggle, { t }),
     ))
 
+    // `settings.plugin.item` changed shape between dsh 0.1.0-rc.6 and rc.7: it
+    // was a *list* slot (options `id`/`order`) before, and became a *keyed* slot
+    // (option `key`, the settings namespace) from rc.7 onward. `SlotCore.register`
+    // only requires the option its `kind` names and ignores the rest, so we
+    // register both shapes at once: `key` satisfies the keyed tab (it must equal
+    // the namespace the Node half serves), while `id`/`order` keep the card
+    // rendering on the older list-slot dsh.
     ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
-      { name: 'settings.plugin.item', id: 'dsh-focus-overlay', order: 1000, label: () => t('settings.label') },
+      {
+        name: 'settings.plugin.item',
+        key: 'dsh-focus-overlay',
+        id: 'dsh-focus-overlay',
+        order: 1000,
+      },
       () => createElement(FocusSettingsCard, { t }),
     ))
   },
