@@ -55,7 +55,7 @@
 | 回到最新 | 离开底部时显示居中的「↓ 回到最新」悬浮按钮 |
 | 文件提及 | 接 `chatFileMentions`，内联代码命中真实文件时变成可点链接 |
 | i18n | 中 / 英文案，跟随界面语言 |
-| 设置页 | 导航条开关、打开定位策略、文字区宽度，持久化到 `localStorage` |
+| 插件配置卡片 | 在「设置 → 插件 → 插件配置」中的可折叠卡片，含导航条开关、打开定位策略、文字区宽度，持久化到 `localStorage` |
 | 自动进入专注 | 回复**正常完成**后自动打开专注并定位到本轮你的提问；异常结束（停止 / 报错 / 超 token / 打断）不触发 |
 | 回复 / 等待提醒 | 专注中回复完成弹「新回复已生成 + 查看」；AI 提问 / 审批等待时弹「AI 正在等待你的回复 + 去回复」，回答完自动消失 |
 
@@ -69,6 +69,14 @@
 dsh plugin --profile web add dsh-focus-overlay
 dsh web
 ```
+
+> 如果 `add` 装到的不是最新版本：这是 pnpm 的 `minimumReleaseAge`（最小发布年龄）安全机制在起作用——默认 **24 小时**内不会把刚发布的版本当作 `latest` 解析，而是回退到上一个稳定版。想立即装最新版，显式指定版本号即可：
+>
+> ```sh
+> dsh plugin --profile web add dsh-focus-overlay@<版本号>
+> ```
+>
+> 或者等满 24 小时，再执行不带版本号的 `add` 命令。
 
 **从 GitHub**
 
@@ -86,13 +94,6 @@ dsh web
 >
 > 然后重新执行 `add`。**该授权允许本包代码在安装时于你的机器上执行**——请只对可信来源授权，并锁定 commit（`github:boogoo619/dsh-focus-overlay#<sha>`）。
 
-**本地目录 / tarball**
-
-```sh
-dsh plugin --profile web add ./dsh-focus-overlay                  # 本地目录
-dsh plugin --profile web add ./dsh-focus-overlay-0.1.0.tgz        # tarball
-```
-
 安装后重启 `dsh web` 生效。
 
 ## 使用
@@ -104,7 +105,7 @@ dsh plugin --profile web add ./dsh-focus-overlay-0.1.0.tgz        # tarball
 
 ## 设置
 
-侧栏「设置 → 专注模式」：
+侧栏「设置 → 插件 → 插件配置」中，展开「专注模式」卡片：
 
 | 选项 | 说明 |
 | --- | --- |

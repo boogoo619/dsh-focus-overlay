@@ -57,7 +57,7 @@ Once in focus mode, an assistant turn no longer shows every step — it folds in
 | Back to latest | A centered "↓ back to latest" floating button appears when you scroll away from the bottom |
 | File mentions | Wires `chatFileMentions`, turning inline-code tokens that name real files into clickable links |
 | i18n | Chinese / English copy, follows the UI language |
-| Settings page | Navbar toggle, open-position strategy, text-area width — persisted to `localStorage` |
+| Plugin configuration card | A collapsible card under "Settings → Plugins → Plugin configuration": navbar toggle, open-position strategy, text-area width — persisted to `localStorage` |
 | Auto-enter focus | After a reply **completes normally**, auto-open focus at your question; abnormal endings (stop / error / max-tokens / interrupt) never fire |
 | Reply / waiting reminders | In focus, a "New reply ready + View" toast on completion; an "AI is waiting for your reply + Reply" toast on a question/approval, auto-cleared once answered |
 
@@ -71,6 +71,14 @@ Requires the `dsh` CLI (`>= 0.1.0-rc.5`).
 dsh plugin --profile web add dsh-focus-overlay
 dsh web
 ```
+
+> If `add` doesn't install the latest version, pnpm's `minimumReleaseAge` (minimum release age) security policy is at work: by default it won't resolve a version as `latest` within **24 hours** of publication, falling back to the previous stable release. To install the latest immediately, pin the version explicitly:
+>
+> ```sh
+> dsh plugin --profile web add dsh-focus-overlay@<version>
+> ```
+>
+> Or wait 24 hours, then re-run the plain `add` command.
 
 **From GitHub**
 
@@ -88,13 +96,6 @@ dsh web
 >
 > Then re-run `add`. **This authorization lets the package's code run on your machine at install time** — only grant it to sources you trust, and pin the commit (`github:boogoo619/dsh-focus-overlay#<sha>`).
 
-**Local directory / tarball**
-
-```sh
-dsh plugin --profile web add ./dsh-focus-overlay                  # local directory
-dsh plugin --profile web add ./dsh-focus-overlay-0.1.0.tgz        # tarball
-```
-
 Restart `dsh web` after install.
 
 ## Usage
@@ -106,7 +107,7 @@ Restart `dsh web` after install.
 
 ## Settings
 
-Sidebar "Settings → Focus Mode":
+In the sidebar "Settings → Plugins → Plugin configuration", expand the "Focus Mode" card:
 
 | Option | Description |
 | --- | --- |

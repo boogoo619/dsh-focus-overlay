@@ -1,12 +1,13 @@
 /**
  * Focus Mode, browser half: a full-screen reading overlay in `shell.overlay`
  * (additive, never replaces shipped UI), a "专注" button in the session header
- * action row, and a settings section. Rendering reuses the official
+ * action row, and a collapsible plugin card in the Plugins settings tab
+ * (`settings.plugin.item`). Rendering reuses the official
  * `@deepseek-ai/dsh-client-ui-primitives` Markdown/MessageText/Tooltip/Button
  * components and the conversation service's image resolver.
  */
 import { createElement } from 'react'
-import { FocusOverlay, FocusSettings, FocusToggle, focusStore } from './FocusView'
+import { FocusOverlay, FocusSettingsCard, FocusToggle, focusStore } from './FocusView'
 import { FOCUS_CSS } from './styles'
 import { zh, en } from './locales'
 import { prefsStore } from './settings'
@@ -109,9 +110,9 @@ export default {
       () => createElement(FocusToggle, { t }),
     ))
 
-    ctx.slots.inject('settings.section', () => ctx.slots.register(
-      { name: 'settings.section', id: 'focus-mode-settings', order: 100, label: () => t('settings.label') },
-      () => createElement(FocusSettings, { t }),
+    ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
+      { name: 'settings.plugin.item', id: 'dsh-focus-overlay', order: 1000, label: () => t('settings.label') },
+      () => createElement(FocusSettingsCard, { t }),
     ))
   },
 }

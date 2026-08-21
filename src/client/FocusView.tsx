@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MarkdownText, MessageText, Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, MessageText, Button, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore } from './settings'
 import type { FocusTranslate } from './locales'
 import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, hasPendingInteraction } from './model'
@@ -344,27 +344,58 @@ export function FocusToggle({ t }: { t: FocusTranslate }) {
   )
 }
 
-export function FocusSettings({ t }: { t: FocusTranslate }) {
+export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
   const prefs = usePrefs()
+  const [open, setOpen] = useState(false)
+  const title = t('settings.label')
   return (
-    <div className="fm-settings">
-      <label className="fm-setting-row">
-        <input type="checkbox" checked={prefs.navbar} onChange={(e) => prefsStore.update({ navbar: e.target.checked })} />
-        <span>{t('settings.navbar')}</span>
-      </label>
-      <label className="fm-setting-row">
-        <input type="checkbox" checked={prefs.scroll === 'preserve'} onChange={(e) => prefsStore.update({ scroll: e.target.checked ? 'preserve' : 'bottom' })} />
-        <span>{t('settings.scrollPreserve')}</span>
-      </label>
-      <label className="fm-setting-row">
-        <input type="checkbox" checked={prefs.autoFocus} onChange={(e) => prefsStore.update({ autoFocus: e.target.checked })} />
-        <span>{t('settings.autoFocus')}</span>
-      </label>
-      <div className="fm-setting-row">
-        <span>{t('settings.width')}</span>
-        <input type="range" min={480} max={1200} step={40} value={prefs.width} onChange={(e) => prefsStore.update({ width: Number(e.target.value) })} />
-        <span>{prefs.width}px</span>
-      </div>
-    </div>
+    <li className={'fm-plugin-card' + (open ? ' fm-plugin-card-open' : '')}>
+      <button
+        type="button"
+        className="fm-plugin-card-header"
+        aria-expanded={open}
+        aria-label={`${t(open ? 'settings.collapse' : 'settings.expand')}: ${title}`}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="fm-plugin-card-headtext">
+          <span className="fm-plugin-card-name">{title}</span>
+          <span className="fm-plugin-card-desc">{t('settings.description')}</span>
+        </span>
+        <IconChevronDownOutline14 className={'fm-plugin-card-chevron' + (open ? ' fm-plugin-card-chevron-open' : '')} />
+      </button>
+      {open ? (
+        <div className="fm-plugin-card-body">
+          <div className="fm-plugin-field">
+            <label className="fm-plugin-check">
+              <input type="checkbox" checked={prefs.navbar} onChange={(e) => prefsStore.update({ navbar: e.target.checked })} />
+              <span className="fm-plugin-check-label">{t('settings.navbar')}</span>
+            </label>
+            <p className="fm-plugin-field-hint">{t('settings.navbar.hint')}</p>
+          </div>
+          <div className="fm-plugin-field">
+            <label className="fm-plugin-check">
+              <input type="checkbox" checked={prefs.scroll === 'preserve'} onChange={(e) => prefsStore.update({ scroll: e.target.checked ? 'preserve' : 'bottom' })} />
+              <span className="fm-plugin-check-label">{t('settings.scrollPreserve')}</span>
+            </label>
+            <p className="fm-plugin-field-hint">{t('settings.scrollPreserve.hint')}</p>
+          </div>
+          <div className="fm-plugin-field">
+            <label className="fm-plugin-check">
+              <input type="checkbox" checked={prefs.autoFocus} onChange={(e) => prefsStore.update({ autoFocus: e.target.checked })} />
+              <span className="fm-plugin-check-label">{t('settings.autoFocus')}</span>
+            </label>
+            <p className="fm-plugin-field-hint">{t('settings.autoFocus.hint')}</p>
+          </div>
+          <div className="fm-plugin-field">
+            <div className="fm-plugin-field-head">
+              <span className="fm-plugin-field-label">{t('settings.width')}</span>
+              <span className="fm-plugin-field-value">{prefs.width}px</span>
+            </div>
+            <input type="range" className="fm-plugin-range" min={480} max={1200} step={40} value={prefs.width} onChange={(e) => prefsStore.update({ width: Number(e.target.value) })} />
+            <p className="fm-plugin-field-hint">{t('settings.width.hint')}</p>
+          </div>
+        </div>
+      ) : null}
+    </li>
   )
 }
