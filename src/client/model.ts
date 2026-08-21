@@ -154,6 +154,11 @@ export function lastUserIndex(items: FocusItem[]): number {
 }
 
 export interface SettledOutcome {
+  /** The snapshot is stable: the last assistant step has finalized or frozen,
+   *  so its node is already in `nodes` and `partial` is empty. Only a stable
+   *  snapshot can be judged — while `partial` is non-null the tail is still
+   *  streaming and `nodes` is missing the final assistant node. */
+  settled: boolean
   /** A reply completed normally (not stopped / errored / capped / interrupted). */
   completed: boolean
   /** Seq of the user message that started this turn, or null when unknown. */
@@ -161,15 +166,26 @@ export interface SettledOutcome {
 }
 
 /**
- * Decide whether an already-settled conversation snapshot (`running === false`)
- * ends in a *normal* completed reply, and which user message started it.
+ * Decide whether a settled conversation snapshot (`running === false`) ends in
+ * a *normal* completed reply, and which user message started it.
  *
- * The caller owns the `running true → false` edge; this is the pure
- * "is the tail a finished reply?" predicate: it walks backwards to the first
- * turn-terminating node (`assistant` / `turn-error` / `turn-max-tokens`), then
- * accepts only a finalized, non-interrupted assistant node.
+ * The caller owns the `running true → false` edge. `running` is relayed on a
+ * different stream than the conversation events, so the edge can fire before an
+ * aborted turn's `interrupted` node has landed — at that instant the tail is
+ * still held in `partial` and `nodes` is missing the final assistant (a
+ * finalized question message can then be mistaken for the tail). To close that
+ * race we require the snapshot to be *stable* first: while `partial` is non-null
+ * we return `settled: false` and the caller must re-evaluate on a later
+ * snapshot. Once stable, this walks backwards to the first turn-terminating node
+ * (`assistant` / `turn-error` / `turn-max-tokens`) and accepts only a finalized,
+ * non-interrupted assistant node.
  */
 export function detectSettledCompletion(snap: any): SettledOutcome {
+  // Still streaming / freeze not landed: the tail node is not in `nodes` yet,
+  // so judging now would race the interrupted marker. Defer.
+  if (snap && snap.partial != null) {
+    return { settled: false, completed: false, anchorSeq: null }
+  }
   const nodes = snap && snap.nodes ? snap.nodes : []
   let terminal: any = null
   for (let i = nodes.length - 1; i >= 0; i--) {
@@ -181,9 +197,9 @@ export function detectSettledCompletion(snap: any): SettledOutcome {
     }
   }
   if (!terminal || terminal.kind !== 'assistant' || terminal.interrupted) {
-    return { completed: false, anchorSeq: null }
+    return { settled: true, completed: false, anchorSeq: null }
   }
-  return { completed: true, anchorSeq: lastUserSeq(nodes) }
+  return { settled: true, completed: true, anchorSeq: lastUserSeq(nodes) }
 }
 
 /** True while the session has a pending interaction — the AI is blocked waiting

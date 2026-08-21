@@ -167,38 +167,85 @@ describe('lastUserIndex', () => {
 describe('detectSettledCompletion', () => {
   it('accepts a finalized, non-interrupted assistant as a normal completion', () => {
     const snap = {
+      partial: null,
       nodes: [
         { kind: 'user', seq: 1 },
         { kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' },
       ],
     }
-    expect(detectSettledCompletion(snap)).toEqual({ completed: true, anchorSeq: 1 })
+    expect(detectSettledCompletion(snap)).toEqual({ settled: true, completed: true, anchorSeq: 1 })
   })
   it('rejects an interrupted (stopped) assistant', () => {
-    expect(detectSettledCompletion({ nodes: [{ kind: 'assistant', seq: 2, turn: 1, step: 1, interrupted: true }] }).completed).toBe(false)
+    const outcome = detectSettledCompletion({ partial: null, nodes: [{ kind: 'assistant', seq: 2, turn: 1, step: 1, interrupted: true }] })
+    expect(outcome).toEqual({ settled: true, completed: false, anchorSeq: null })
   })
   it('rejects turn-error and turn-max-tokens terminals', () => {
-    expect(detectSettledCompletion({ nodes: [{ kind: 'assistant', seq: 1, turn: 1, step: 1 }, { kind: 'turn-error', seq: 2, message: 'boom' }] }).completed).toBe(false)
-    expect(detectSettledCompletion({ nodes: [{ kind: 'turn-max-tokens', seq: 2 }] }).completed).toBe(false)
+    expect(detectSettledCompletion({ partial: null, nodes: [{ kind: 'assistant', seq: 1, turn: 1, step: 1 }, { kind: 'turn-error', seq: 2, message: 'boom' }] })).toEqual({ settled: true, completed: false, anchorSeq: null })
+    expect(detectSettledCompletion({ partial: null, nodes: [{ kind: 'turn-max-tokens', seq: 2 }] })).toEqual({ settled: true, completed: false, anchorSeq: null })
   })
   it('rejects when no terminal node exists', () => {
-    expect(detectSettledCompletion({ nodes: [{ kind: 'user', seq: 1 }] }).completed).toBe(false)
-    expect(detectSettledCompletion({ nodes: [] }).completed).toBe(false)
-    expect(detectSettledCompletion(undefined).completed).toBe(false)
+    expect(detectSettledCompletion({ partial: null, nodes: [{ kind: 'user', seq: 1 }] })).toEqual({ settled: true, completed: false, anchorSeq: null })
+    expect(detectSettledCompletion({ partial: null, nodes: [] })).toEqual({ settled: true, completed: false, anchorSeq: null })
+    expect(detectSettledCompletion(undefined)).toEqual({ settled: true, completed: false, anchorSeq: null })
   })
   it('skips trailing non-terminal nodes (context after assistant)', () => {
     const snap = {
+      partial: null,
       nodes: [
         { kind: 'user', seq: 1 },
         { kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' },
         { kind: 'context', seq: 3 },
       ],
     }
-    expect(detectSettledCompletion(snap)).toEqual({ completed: true, anchorSeq: 1 })
+    expect(detectSettledCompletion(snap)).toEqual({ settled: true, completed: true, anchorSeq: 1 })
   })
   it('anchorSeq is null when no user/steering started the turn', () => {
-    const snap = { nodes: [{ kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' }] }
-    expect(detectSettledCompletion(snap)).toEqual({ completed: true, anchorSeq: null })
+    const snap = { partial: null, nodes: [{ kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' }] }
+    expect(detectSettledCompletion(snap)).toEqual({ settled: true, completed: true, anchorSeq: null })
+  })
+
+  // Regression: the running bit can flip before the aborted turn's frozen
+  // (interrupted) node has landed, so the tail is still streaming in `partial`
+  // and `nodes` is missing the final assistant. We must defer, not misjudge.
+  it('defers (settled:false) while a reply is still streaming in partial', () => {
+    const snap = {
+      partial: { turn: 1, step: 2, blocks: [{ kind: 'text', text: 'still writing' }] },
+      nodes: [
+        { kind: 'user', seq: 1 },
+        { kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' },
+      ],
+    }
+    expect(detectSettledCompletion(snap)).toEqual({ settled: false, completed: false, anchorSeq: null })
+  })
+
+  // The exact reported bug: a finalized question (step 1, no `interrupted`) is
+  // followed by the continued output still in `partial`. Without the guard this
+  // would read as a normal completion and auto-open focus; with it, deferred.
+  it('does not misjudge a finalized question as the tail while the follow-up streams', () => {
+    const snap = {
+      partial: { turn: 1, step: 2, blocks: [{ kind: 'text', text: 'continued' }] },
+      nodes: [
+        { kind: 'user', seq: 1 },
+        { kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' },
+        { kind: 'tool-result', seq: 3 },
+      ],
+    }
+    expect(detectSettledCompletion(snap)).toEqual({ settled: false, completed: false, anchorSeq: null })
+  })
+
+  // Once the freeze lands (partial empties and the interrupted node enters
+  // `nodes`), the same scenario is correctly rejected.
+  it('rejects once the aborted follow-up freezes into an interrupted node', () => {
+    const snap = {
+      partial: null,
+      nodes: [
+        { kind: 'user', seq: 1 },
+        { kind: 'assistant', seq: 2, turn: 1, step: 1, messageId: 'm1' },
+        { kind: 'tool-result', seq: 3 },
+        { kind: 'assistant', seq: 3.1, turn: 1, step: 2, interrupted: true },
+      ],
+    }
+    expect(detectSettledCompletion(snap)).toEqual({ settled: true, completed: false, anchorSeq: null })
   })
 })
 

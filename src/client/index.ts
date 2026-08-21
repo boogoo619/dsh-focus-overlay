@@ -50,10 +50,12 @@ export default {
       let currentId: any = undefined
       let unsubSession: (() => void) | null = null
       let prevRunning = false
+      let pendingSettle = false
 
       const watch = (id: any) => {
         if (unsubSession) { unsubSession(); unsubSession = null }
         prevRunning = false
+        pendingSettle = false
         if (id == null) return
         const binding = sessions.binding(id)
         if (!binding) return
@@ -62,12 +64,23 @@ export default {
           const snap = face.getSnapshot()
           if (!snap) return
           const running = !!snap.running
-          if (prevRunning && !running) {
+          // A turn just finished: arm the settle judgement. Do NOT judge here —
+          // the tail may still be streaming into `partial` (its final node has
+          // not landed yet), so we wait for a stable snapshot instead.
+          if (prevRunning && !running) pendingSettle = true
+          if (running) pendingSettle = false
+          if (pendingSettle && !running) {
             const outcome = detectSettledCompletion(snap)
-            if (outcome.completed && prefsStore.get().autoFocus) {
-              if (focusStore.get()) focusStore.notifyDone()
-              else { focusStore.setAutoAnchor(outcome.anchorSeq); focusStore.set(true) }
+            if (outcome.settled) {
+              pendingSettle = false
+              if (outcome.completed && prefsStore.get().autoFocus) {
+                if (focusStore.get()) focusStore.notifyDone()
+                else { focusStore.setAutoAnchor(outcome.anchorSeq); focusStore.set(true) }
+              }
             }
+            // Not settled yet: keep `pendingSettle` armed. The `turn/end` frame
+            // that lands the final node also triggers this subscription, so the
+            // next snapshot re-evaluates against the complete node list.
           }
           prevRunning = running
         }
