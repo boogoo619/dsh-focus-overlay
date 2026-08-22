@@ -99,6 +99,8 @@ dsh web
 
 Restart `dsh web` after install.
 
+> **First run**: after restarting, the welcome page shows a one-time "Focus Mode" intro that explains the features and lets you configure them in place; all of these settings can be changed anytime in "Settings → Plugins → Plugin configuration".
+
 ## Usage
 
 1. Open a session and click the **"Focus"** button in the session header action row.
@@ -114,10 +116,10 @@ In the sidebar "Settings → Plugins → Plugin configuration", expand the "Focu
 
 | Option | Description |
 | --- | --- |
-| Show right-side navbar | Toggle the nav dots (default on) |
-| Preserve chat position on open | Open at your current reading position; off opens at the latest (default on) |
+| Auto-enter focus mode when the AI finishes a reply | On a normal completion: auto-open at your question when closed, or a "New reply ready" toast when open (default off) |
+| Sync the current reading position when entering focus mode | Open at the message you're reading; off opens at the latest (default on) |
+| Show right-side turn navbar | One navigation dot per user message (turn) — hover to preview, click to jump (default on) |
 | Text width | 480–1200px slider for the reading column (default 760px) |
-| Auto-enter focus mode when a reply completes | On a normal completion: auto-open at your question when closed, or a "New reply ready" toast when open; an "AI is waiting" toast on a question/approval (default off) |
 
 ## License
 

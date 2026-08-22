@@ -11,6 +11,7 @@ import {
   lastUserIndex,
   detectSettledCompletion,
   hasPendingInteraction,
+  onboardingSeen,
 } from '../src/client/model'
 
 // Minimal translate stub: renders the key plus the interpolated `n` so tests
@@ -257,5 +258,13 @@ describe('hasPendingInteraction', () => {
     expect(hasPendingInteraction({})).toBe(false)
     expect(hasPendingInteraction(undefined)).toBe(false)
     expect(hasPendingInteraction(null)).toBe(false)
+  })
+})
+
+describe('onboardingSeen', () => {
+  it('is true only when the stored flag matches the current version', () => {
+    expect(onboardingSeen('1', '1')).toBe(true)
+    expect(onboardingSeen('0', '1')).toBe(false)
+    expect(onboardingSeen(null, '1')).toBe(false)
   })
 })

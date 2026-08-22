@@ -7,7 +7,7 @@
  * components and the conversation service's image resolver.
  */
 import { createElement } from 'react'
-import { FocusOverlay, FocusSettingsCard, FocusToggle, focusStore } from './FocusView'
+import { FocusOverlay, FocusSettingsCard, FocusToggle, FocusOnboarding, focusStore } from './FocusView'
 import { FOCUS_CSS } from './styles'
 import { zh, en } from './locales'
 import { prefsStore } from './settings'
@@ -142,6 +142,22 @@ export default {
         order: 1000,
       },
       () => createElement(FocusSettingsCard, { t }),
+    ))
+
+    // First-run onboarding: on the empty hero (no/blank session) show a one-time
+    // intro — feature overview + the same prefs as the settings card — and let
+    // the user jump straight to "Settings → Plugins → Plugin configuration".
+    // The step persists its own "seen" flag (localStorage); the coordinator's
+    // completed set is component-local, so the step skips itself via complete()
+    // once seen. On dsh versions without `settings.onboarding` the inject never
+    // fires and the intro simply never appears (no crash).
+    ctx.slots.inject('settings.onboarding', () => ctx.slots.register(
+      {
+        name: 'settings.onboarding',
+        id: 'dsh-focus-overlay',
+        order: 10,
+      },
+      (props: any) => createElement(FocusOnboarding, { ...props, t }),
     ))
   },
 }

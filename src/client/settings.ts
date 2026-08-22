@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { onboardingSeen } from './model'
 
 /** User preferences, persisted to localStorage (bundle plugins have full browser access). */
 export interface FocusPrefs {
@@ -38,4 +39,17 @@ export function usePrefs(): FocusPrefs {
   const [p, setP] = useState<FocusPrefs>(prefsStore.get)
   useEffect(() => prefsStore.subscribe(() => setP(prefsStore.get)), [])
   return p
+}
+
+// ---- first-run onboarding flag (persisted so the intro shows only once) ----
+export const ONBOARD_KEY = 'dsh-focus-overlay:onboarded'
+export const ONBOARD_VERSION = '1'
+
+export const onboardingStore = {
+  isDone: (): boolean => {
+    try { return onboardingSeen(localStorage.getItem(ONBOARD_KEY), ONBOARD_VERSION) } catch { return false }
+  },
+  markDone: () => {
+    try { localStorage.setItem(ONBOARD_KEY, ONBOARD_VERSION) } catch { /* ignore */ }
+  },
 }

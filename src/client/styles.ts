@@ -60,4 +60,15 @@ body[data-fm-focus] [data-dsh-panel-host]{display:none!important}
 body[data-fm-focus] #root{margin-right:0!important;width:100%!important}
 body[data-fm-focus] #root [data-dsh-frame] > [data-pane="conversation"],
 body[data-fm-focus] #root :has(> [data-slot="conversation"]){margin-bottom:0!important}
+/* First-run onboarding (settings.onboarding step) — content inside the official
+   Modal primitive; the primitive owns the mask/dialog chrome, these style our body. */
+.fm-onboard{width:min(600px,100%);padding:0}
+.fm-onboard-content{box-sizing:border-box;flex-direction:column;max-height:calc(100vh - 48px);padding:28px;display:flex;overflow-y:auto}
+.fm-onboard-title{color:var(--dsw-alias-label-primary);outline:none;margin:0;font-size:20px;font-weight:500;line-height:28px}
+.fm-onboard-intro{color:var(--dsw-alias-label-secondary);margin:8px 0 0;font-size:14px;line-height:22px}
+.fm-onboard-subtitle{color:var(--dsw-alias-label-primary);margin:20px 0 8px;font-size:14px;font-weight:600;line-height:22px}
+.fm-onboard-features{margin:0;padding:0 0 0 18px;list-style:disc;display:flex;flex-direction:column;gap:6px;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px}
+.fm-onboard-note{color:var(--dsw-alias-label-tertiary);margin:12px 0 0;font-size:12px;line-height:18px}
+.fm-onboard-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+@media (width<=560px){.fm-onboard-content{padding:24px}}
 `

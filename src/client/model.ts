@@ -210,3 +210,10 @@ export function hasPendingInteraction(snap: any): boolean {
   const pending = snap && snap.pending
   return Array.isArray(pending) && pending.length > 0
 }
+
+/** True once the persisted onboarding flag matches the current intro version.
+ *  Kept as a pure comparison so the "already seen?" decision is testable and
+ *  can be versioned: bump the version to re-show the intro after a major change. */
+export function onboardingSeen(stored: string | null, version: string): boolean {
+  return stored === version
+}

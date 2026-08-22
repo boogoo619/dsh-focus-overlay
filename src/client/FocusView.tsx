@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MarkdownText, MessageText, Button, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { usePrefs, prefsStore } from './settings'
+import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { usePrefs, prefsStore, onboardingStore } from './settings'
 import type { FocusTranslate } from './locales'
 import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, hasPendingInteraction } from './model'
 
@@ -344,8 +344,44 @@ export function FocusToggle({ t }: { t: FocusTranslate }) {
   )
 }
 
-export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
+function FocusPrefsFields({ t }: { t: FocusTranslate }) {
   const prefs = usePrefs()
+  return (
+    <>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.autoFocus} onChange={(e) => prefsStore.update({ autoFocus: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.autoFocus')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.autoFocus.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.scroll === 'preserve'} onChange={(e) => prefsStore.update({ scroll: e.target.checked ? 'preserve' : 'bottom' })} />
+          <span className="fm-plugin-check-label">{t('settings.scrollPreserve')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.scrollPreserve.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.navbar} onChange={(e) => prefsStore.update({ navbar: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.navbar')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.navbar.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <div className="fm-plugin-field-head">
+          <span className="fm-plugin-field-label">{t('settings.width')}</span>
+          <span className="fm-plugin-field-value">{prefs.width}px</span>
+        </div>
+        <input type="range" className="fm-plugin-range" min={480} max={1200} step={40} value={prefs.width} onChange={(e) => prefsStore.update({ width: Number(e.target.value) })} />
+        <p className="fm-plugin-field-hint">{t('settings.width.hint')}</p>
+      </div>
+    </>
+  )
+}
+
+export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
   const [open, setOpen] = useState(false)
   const title = t('settings.label')
   return (
@@ -365,37 +401,62 @@ export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
       </button>
       {open ? (
         <div className="fm-plugin-card-body">
-          <div className="fm-plugin-field">
-            <label className="fm-plugin-check">
-              <input type="checkbox" checked={prefs.navbar} onChange={(e) => prefsStore.update({ navbar: e.target.checked })} />
-              <span className="fm-plugin-check-label">{t('settings.navbar')}</span>
-            </label>
-            <p className="fm-plugin-field-hint">{t('settings.navbar.hint')}</p>
-          </div>
-          <div className="fm-plugin-field">
-            <label className="fm-plugin-check">
-              <input type="checkbox" checked={prefs.scroll === 'preserve'} onChange={(e) => prefsStore.update({ scroll: e.target.checked ? 'preserve' : 'bottom' })} />
-              <span className="fm-plugin-check-label">{t('settings.scrollPreserve')}</span>
-            </label>
-            <p className="fm-plugin-field-hint">{t('settings.scrollPreserve.hint')}</p>
-          </div>
-          <div className="fm-plugin-field">
-            <label className="fm-plugin-check">
-              <input type="checkbox" checked={prefs.autoFocus} onChange={(e) => prefsStore.update({ autoFocus: e.target.checked })} />
-              <span className="fm-plugin-check-label">{t('settings.autoFocus')}</span>
-            </label>
-            <p className="fm-plugin-field-hint">{t('settings.autoFocus.hint')}</p>
-          </div>
-          <div className="fm-plugin-field">
-            <div className="fm-plugin-field-head">
-              <span className="fm-plugin-field-label">{t('settings.width')}</span>
-              <span className="fm-plugin-field-value">{prefs.width}px</span>
-            </div>
-            <input type="range" className="fm-plugin-range" min={480} max={1200} step={40} value={prefs.width} onChange={(e) => prefsStore.update({ width: Number(e.target.value) })} />
-            <p className="fm-plugin-field-hint">{t('settings.width.hint')}</p>
-          </div>
+          <FocusPrefsFields t={t} />
         </div>
       ) : null}
     </li>
+  )
+}
+
+export function FocusOnboarding(props: any) {
+  const { complete, openSection, t } = props
+  const [done, setDone] = useState<boolean>(() => onboardingStore.isDone())
+  const finished = useRef(false)
+  const finish = useCallback(() => {
+    if (finished.current) return
+    finished.current = true
+    complete()
+  }, [complete])
+
+  // Skip silently once the intro has already been seen (the coordinator's
+  // completed set is component-local, so the step must self-advance here).
+  useEffect(() => { if (done) finish() }, [done, finish])
+
+  // Keep the app root inert while the intro modal is up (same discipline as the
+  // shipped onboarding modal), so the page behind is non-interactive.
+  useEffect(() => {
+    const appRoot = document.getElementById('root')
+    if (!appRoot) return
+    const previous = appRoot.inert
+    appRoot.inert = true
+    return () => { appRoot.inert = previous }
+  }, [])
+
+  if (done) return null
+
+  const dismiss = () => { onboardingStore.markDone(); setDone(true); finish() }
+  // Dismiss first (removes #root inert) and then open the Plugins section, so the
+  // settings panel is not rendered inert behind this modal.
+  const goSettings = () => { onboardingStore.markDone(); setDone(true); finish(); openSection('plugins') }
+  const features = ['fullscreen', 'fold', 'navbar', 'autoFocus']
+
+  return (
+    <Modal open title={t('onboarding.title')} onClose={dismiss} headless className="fm-onboard">
+      <div className="fm-onboard-content">
+        <h2 className="fm-onboard-title">{t('onboarding.title')}</h2>
+        <p className="fm-onboard-intro">{t('onboarding.intro')}</p>
+        <h3 className="fm-onboard-subtitle">{t('onboarding.features.title')}</h3>
+        <ul className="fm-onboard-features">
+          {features.map((f) => <li key={f}>{t('onboarding.feature.' + f)}</li>)}
+        </ul>
+        <h3 className="fm-onboard-subtitle">{t('onboarding.configure.title')}</h3>
+        <FocusPrefsFields t={t} />
+        <p className="fm-onboard-note">{t('onboarding.laterNote')}</p>
+        <div className="fm-onboard-actions">
+          <Button variant="outline" size="sm" onClick={goSettings}>{t('onboarding.openSettings')}</Button>
+          <Button variant="primary" size="sm" onClick={dismiss}>{t('onboarding.done')}</Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
