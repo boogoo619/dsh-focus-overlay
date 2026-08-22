@@ -28,6 +28,23 @@ export default {
       return () => { style.remove() }
     })
 
+    // DSH-better-sidebar compatibility: mark the body while focus is on so the
+    // package stylesheet hides better-sidebar's floating panel host (top-right
+    // toggle cluster + right/bottom panels) and neutralizes its #root layout
+    // push. Its host lives outside #root at z-index 40/45 — above shell.overlay's
+    // z-20 layer — so this overlay alone cannot cover it. Every focus entry/exit
+    // path (header toggle, exit button, Esc, auto-focus, reply toast) funnels
+    // through focusStore.set(), so one subscription covers them all.
+    ctx.effect(() => {
+      const sync = () => {
+        if (focusStore.get()) document.body.setAttribute('data-fm-focus', '')
+        else document.body.removeAttribute('data-fm-focus')
+      }
+      sync()
+      const unsub = focusStore.subscribe(sync)
+      return () => { unsub(); document.body.removeAttribute('data-fm-focus') }
+    })
+
     // i18n dictionaries + bound translate.
     ctx.effect(() => ctx.locale.register(NS, { zh, en }))
     const t = ctx.locale.bind(NS)

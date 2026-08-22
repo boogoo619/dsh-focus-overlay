@@ -51,4 +51,13 @@ export const FOCUS_CSS = `
 .fm-plugin-check input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--dsw-alias-brand-primary,#4176e6)}
 .fm-plugin-check-label{color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5}
 .fm-plugin-range{width:100%;max-width:280px;cursor:pointer;accent-color:var(--dsw-alias-brand-primary,#4176e6)}
+/* DSH-better-sidebar compatibility: its panel host (top-right toggle cluster +
+   right/bottom panels) is appended to document.body at z-index 40/45, above
+   shell.overlay's z-20 layer, so this overlay cannot cover it. Hide the host
+   while focus is on, and neutralize the #root layout push it applies when its
+   panels are open. Selectors mirror better-sidebar's own layout.css exactly. */
+body[data-fm-focus] [data-dsh-panel-host]{display:none!important}
+body[data-fm-focus] #root{margin-right:0!important;width:100%!important}
+body[data-fm-focus] #root [data-dsh-frame] > [data-pane="conversation"],
+body[data-fm-focus] #root :has(> [data-slot="conversation"]){margin-bottom:0!important}
 `
