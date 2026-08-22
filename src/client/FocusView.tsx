@@ -119,6 +119,7 @@ function FocusContent(props: any) {
   const [activeKey, setActiveKey] = useState<string | null>(navKeys.length ? navKeys[navKeys.length - 1] : null)
   const [atBottom, setAtBottom] = useState<boolean>(true)
   const rafId = useRef<number | null>(null)
+  const overlayRef = useRef<HTMLDivElement | null>(null)
 
   const computeActive = () => {
     if (!bodyEl) return null
@@ -177,6 +178,26 @@ function FocusContent(props: any) {
       bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
       setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
     }
+  }, [])
+
+  // ESC must exit focus mode on the first press, no matter where keyboard focus
+  // sits. A keydown handler on the overlay div only fires while focus is inside
+  // it, so right after opening — focus is still on the header toggle (or the
+  // composer/body) behind the full-screen overlay — the first ESC used to be
+  // swallowed until the user clicked into the content. Listen on window in the
+  // capture phase instead: it runs first regardless of focus target, and stops
+  // the hidden page behind from also reacting to ESC.
+  useEffect(() => {
+    overlayRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        focusStore.set(false)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
   const loadImage = useCallback((attachment: any): Promise<string> => {
@@ -317,7 +338,7 @@ function FocusContent(props: any) {
       : null
 
   return (
-    <div className="fm-overlay" tabIndex={-1} autoFocus onKeyDown={(e) => { if (e && e.key === 'Escape') focusStore.set(false) }}>
+    <div className="fm-overlay" ref={overlayRef} tabIndex={-1}>
       <div className="fm-topbar">
         <div className="fm-title">{title}</div>
         <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
