@@ -14,6 +14,7 @@ export const FocusSettingsSchema = z.object({
   scroll: z.union(['preserve', 'bottom']).default('preserve'),
   width: z.number().default(760),
   autoFocus: z.boolean().default(false),
+  hotkey: z.boolean().default(true),
 })
 
 export default function apply(ctx) {

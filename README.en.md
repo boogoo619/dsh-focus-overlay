@@ -22,6 +22,7 @@
 - **Fold tool calls** — an assistant turn collapses into a one-line summary
 - **Quick navigation** — a right-side node navbar with hover preview and click-to-jump
 - **Auto-focus & reminders** — after a reply completes, optionally auto-enter focus at your question; while in focus, get a toast for a new reply or when the AI is waiting on you
+- **Hotkey F** — press `F` anywhere to enter focus mode instantly (toggleable in settings); typing in an input never triggers it
 
 These features are designed to give **small screens** more content space: tucking away the persistent header/composer and tool steps lets the conversation use as much of the screen as possible.
 
@@ -59,6 +60,7 @@ Once in focus mode, an assistant turn no longer shows every step — it folds in
 | i18n | Chinese / English copy, follows the UI language |
 | Plugin configuration card | A collapsible card under "Settings → Plugins → Plugin configuration": navbar toggle, open-position strategy, text-area width — persisted to `localStorage` |
 | Auto-enter focus | After a reply **completes normally**, auto-open focus at your question; abnormal endings (stop / error / max-tokens / interrupt) never fire |
+| F hotkey | Press `F` anywhere to enter focus mode instantly (default on, toggleable in settings); never fires while typing in an input, auto-repeat ignored |
 | Reply / waiting reminders | In focus, a "New reply ready + View" toast on completion; an "AI is waiting for your reply + Reply" toast on a question/approval, auto-cleared once answered |
 | DSH-better-sidebar compatibility | While in focus, auto-hide its top-right panel toggle buttons and any open right/bottom panels (and release the squeezed layout); restored on exit |
 
@@ -103,7 +105,7 @@ Restart `dsh web` after install.
 
 ## Usage
 
-1. Open a session and click the **"Focus"** button in the session header action row.
+1. Open a session and click the **"Focus"** button in the session header action row (or press `F` — toggleable in settings).
 2. You enter the full-screen focus view: a thin top bar (session title + exit) and the conversation only, with tool steps folded into summary lines.
 3. Hover the right-side dots to preview, click to jump; a centered "↓ back to latest" button appears when you're not at the bottom.
 4. Press `Esc` or click "Exit focus" to return — the original UI is untouched.
@@ -117,6 +119,7 @@ In the sidebar "Settings → Plugins → Plugin configuration", expand the "Focu
 | Option | Description |
 | --- | --- |
 | Auto-enter focus mode when the AI finishes a reply | On a normal completion: auto-open at your question when closed, or a "New reply ready" toast when open (default off) |
+| Press F to enter focus mode | Press `F` anywhere to enter focus mode instantly; never fires while typing in an input (default on) |
 | Sync the current reading position when entering focus mode | Open at the message you're reading; off opens at your most recent question (default on) |
 | Show right-side turn navbar | One navigation dot per user message (turn) — hover to preview, click to jump (default on) |
 | Text width | 480–1200px slider for the reading column (default 760px) |

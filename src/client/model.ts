@@ -217,3 +217,21 @@ export function hasPendingInteraction(snap: any): boolean {
 export function onboardingSeen(stored: string | null, version: string): boolean {
   return stored === version
 }
+
+/** Whether a keydown should enter focus mode via the F hotkey. Pure decision so
+ *  the guard rails are unit-testable: the pref must be enabled, focus must not
+ *  already be open, the press must not land in an editable element (composer /
+ *  inputs — typing "f" must never yank the user into focus mode), no modifier
+ *  may be held, auto-repeat is ignored, and the key must be F (either case). */
+export function hotkeyShouldEnter(
+  e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; repeat: boolean },
+  opts: { enabled: boolean; typing: boolean; focusOn: boolean },
+): boolean {
+  if (!opts.enabled) return false
+  if (opts.focusOn) return false
+  if (opts.typing) return false
+  if (e.repeat) return false
+  if (e.ctrlKey || e.metaKey || e.altKey) return false
+  const k = typeof e.key === 'string' ? e.key : ''
+  return k === 'f' || k === 'F'
+}

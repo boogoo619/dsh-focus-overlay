@@ -392,6 +392,13 @@ function FocusPrefsFields({ t }: { t: FocusTranslate }) {
       </div>
       <div className="fm-plugin-field">
         <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.hotkey} onChange={(e) => prefsStore.update({ hotkey: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.hotkey')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.hotkey.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
           <input type="checkbox" checked={prefs.scroll === 'preserve'} onChange={(e) => prefsStore.update({ scroll: e.target.checked ? 'preserve' : 'bottom' })} />
           <span className="fm-plugin-check-label">{t('settings.scrollPreserve')}</span>
         </label>
@@ -473,7 +480,7 @@ export function FocusOnboarding(props: any) {
   // Dismiss first (removes #root inert) and then open the Plugins section, so the
   // settings panel is not rendered inert behind this modal.
   const goSettings = () => { onboardingStore.markDone(); setDone(true); finish(); openSection('plugins') }
-  const features = ['fullscreen', 'fold', 'navbar', 'autoFocus']
+  const features = ['fullscreen', 'fold', 'navbar', 'autoFocus', 'hotkey']
 
   return (
     <Modal open title={t('onboarding.title')} onClose={dismiss} headless className="fm-onboard">

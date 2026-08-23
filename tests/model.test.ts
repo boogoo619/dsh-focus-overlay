@@ -12,6 +12,7 @@ import {
   detectSettledCompletion,
   hasPendingInteraction,
   onboardingSeen,
+  hotkeyShouldEnter,
 } from '../src/client/model'
 
 // Minimal translate stub: renders the key plus the interpolated `n` so tests
@@ -266,5 +267,50 @@ describe('onboardingSeen', () => {
     expect(onboardingSeen('1', '1')).toBe(true)
     expect(onboardingSeen('0', '1')).toBe(false)
     expect(onboardingSeen(null, '1')).toBe(false)
+  })
+})
+
+describe('hotkeyShouldEnter', () => {
+  // Base event/opts that would trigger: F, no modifiers, pref on, not typing,
+  // focus closed.
+  const base = () => ({
+    e: { key: 'f', ctrlKey: false, metaKey: false, altKey: false, repeat: false },
+    opts: { enabled: true, typing: false, focusOn: false },
+  })
+
+  it('enters on plain F in either case', () => {
+    expect(hotkeyShouldEnter(base().e, base().opts)).toBe(true)
+    expect(hotkeyShouldEnter({ ...base().e, key: 'F' }, base().opts)).toBe(true)
+  })
+
+  it('ignores other keys', () => {
+    for (const key of ['a', 'g', 'Enter', 'Escape', ' ']) {
+      expect(hotkeyShouldEnter({ ...base().e, key }, base().opts)).toBe(false)
+    }
+    expect(hotkeyShouldEnter({ ...base().e, key: '' }, base().opts)).toBe(false)
+    // missing `key` (never happens on KeyboardEvent, but defensively)
+    expect(hotkeyShouldEnter({ ...base().e, key: undefined as any }, base().opts)).toBe(false)
+  })
+
+  it('ignores when the pref is off', () => {
+    expect(hotkeyShouldEnter(base().e, { ...base().opts, enabled: false })).toBe(false)
+  })
+
+  it('ignores when focus is already open', () => {
+    expect(hotkeyShouldEnter(base().e, { ...base().opts, focusOn: true })).toBe(false)
+  })
+
+  it('ignores while typing in an editable element', () => {
+    expect(hotkeyShouldEnter(base().e, { ...base().opts, typing: true })).toBe(false)
+  })
+
+  it('ignores modifier combinations (Ctrl/Meta/Alt + F)', () => {
+    expect(hotkeyShouldEnter({ ...base().e, ctrlKey: true }, base().opts)).toBe(false)
+    expect(hotkeyShouldEnter({ ...base().e, metaKey: true }, base().opts)).toBe(false)
+    expect(hotkeyShouldEnter({ ...base().e, altKey: true }, base().opts)).toBe(false)
+  })
+
+  it('ignores key auto-repeat', () => {
+    expect(hotkeyShouldEnter({ ...base().e, repeat: true }, base().opts)).toBe(false)
   })
 })

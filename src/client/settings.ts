@@ -8,10 +8,12 @@ export interface FocusPrefs {
   width: number
   /** When enabled, a normally-completed reply auto-opens focus mode (or, if already open, shows a "new reply" reminder). */
   autoFocus: boolean
+  /** When enabled, pressing F anywhere enters focus mode (ignored while typing in an input). */
+  hotkey: boolean
 }
 
 const KEY = 'dsh-focus-overlay:prefs'
-const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760, autoFocus: false }
+const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760, autoFocus: false, hotkey: true }
 
 function load(): FocusPrefs {
   try {

@@ -11,7 +11,7 @@ import { FocusOverlay, FocusSettingsCard, FocusToggle, FocusOnboarding, focusSto
 import { FOCUS_CSS } from './styles'
 import { zh, en } from './locales'
 import { prefsStore } from './settings'
-import { detectSettledCompletion } from './model'
+import { detectSettledCompletion, hotkeyShouldEnter } from './model'
 
 const NS = 'focus'
 
@@ -115,6 +115,29 @@ export default {
       const unsubList = sessions.list.subscribe(onList)
 
       return () => { if (unsubList) unsubList(); if (unsubSession) unsubSession() }
+    })
+
+    // F hotkey: enter focus mode from anywhere. The guard rails (pref on, no
+    // modifiers, no auto-repeat, not typing in an editable element, focus not
+    // already open) live in the pure `hotkeyShouldEnter` decision so they are
+    // unit-testable. The listener runs in the capture phase like the overlay's
+    // Esc handler, so it fires regardless of where keyboard focus sits, but it
+    // only preventDefault()s when it actually enters focus mode — typing an "f"
+    // in the composer is never swallowed. Exiting stays on Esc inside the
+    // overlay. The pref is read reactively inside the handler, so toggling the
+    // setting applies immediately without re-registering.
+    ctx.effect(() => {
+      const onKey = (e: KeyboardEvent) => {
+        const el = e.target as HTMLElement | null
+        const tag = el ? el.tagName : ''
+        const typing = !!el && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable)
+        if (!hotkeyShouldEnter(e, { enabled: prefsStore.get().hotkey, typing, focusOn: focusStore.get() })) return
+        e.preventDefault()
+        focusStore.captureChatAnchor()
+        focusStore.set(true)
+      }
+      window.addEventListener('keydown', onKey, true)
+      return () => window.removeEventListener('keydown', onKey, true)
     })
 
     ctx.slots.inject('shell.overlay', () => ctx.slots.register(
