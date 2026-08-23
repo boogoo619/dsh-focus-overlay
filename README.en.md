@@ -117,7 +117,7 @@ In the sidebar "Settings → Plugins → Plugin configuration", expand the "Focu
 | Option | Description |
 | --- | --- |
 | Auto-enter focus mode when the AI finishes a reply | On a normal completion: auto-open at your question when closed, or a "New reply ready" toast when open (default off) |
-| Sync the current reading position when entering focus mode | Open at the message you're reading; off opens at the latest (default on) |
+| Sync the current reading position when entering focus mode | Open at the message you're reading; off opens at your most recent question (default on) |
 | Show right-side turn navbar | One navigation dot per user message (turn) — hover to preview, click to jump (default on) |
 | Text width | 480–1200px slider for the reading column (default 760px) |
 

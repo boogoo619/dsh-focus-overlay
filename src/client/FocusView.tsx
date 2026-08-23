@@ -174,7 +174,21 @@ function FocusContent(props: any) {
     if (prefs.scroll === 'preserve' && idx >= 0) {
       scrollToKey('fm-' + idx, false)
       setActiveKey('fm-' + idx)
+    } else if (prefs.scroll !== 'preserve') {
+      // Position sync off: open at the last message the user sent (the newest
+      // question), not at the very bottom of the conversation — the AI reply
+      // that follows it would otherwise push the question off-screen.
+      const lastIdx = lastUserIndex(items)
+      if (lastIdx >= 0) {
+        scrollToKey('fm-' + lastIdx, false)
+        setActiveKey('fm-' + lastIdx)
+      } else if (bodyEl) {
+        bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
+        setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
+      }
     } else if (bodyEl) {
+      // Preserve requested but the captured anchor isn't in this overlay's
+      // items (e.g. an empty/compacted message): land at the freshest content.
       bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
       setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
     }
