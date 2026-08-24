@@ -10,7 +10,8 @@
 </p>
 
 <p align="center">
-  <img src="https://badgen.net/npm/v/dsh-focus-overlay" alt="npm version">
+  <img src="https://img.shields.io/npm/v/dsh-focus-overlay" alt="npm version">
+  <img src="https://img.shields.io/npm/dm/dsh-focus-overlay" alt="npm downloads (monthly)">
   <img src="https://badgen.net/badge/license/MIT/green" alt="license">
   <img src="https://badgen.net/badge/dsh/%3E%3D0.1.0-rc.5/blue" alt="dsh version">
 </p>
