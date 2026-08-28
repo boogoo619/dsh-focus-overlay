@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore, onboardingStore } from './settings'
 import type { FocusTranslate } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, hasPendingInteraction } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, bottomForm, bottomZoneAfter } from './model'
+import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 
 // ---- shared focus state (module scope; the overlay and the header toggle read it) ----
 let focusOn = false
@@ -117,9 +118,21 @@ function FocusContent(props: any) {
   }
 
   const [activeKey, setActiveKey] = useState<string | null>(navKeys.length ? navKeys[navKeys.length - 1] : null)
-  const [atBottom, setAtBottom] = useState<boolean>(true)
+  // Bottom-zone membership with hysteresis (see bottomZoneAfter): true while
+  // the reader sits at the live edge — the position the dock offers the bar.
+  const [zone, setZone] = useState<boolean>(true)
   const rafId = useRef<number | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
+  // Bottom dock state: answer-card open (the waiting toast morphed in place),
+  // textarea focus (the guard that keeps an empty-but-focused bar up), the
+  // one-render pill→bar handoff (engaged: focus not landed yet), and the
+  // plugin-local fallback draft for dsh builds without the input service.
+  const [cardOpen, setCardOpen] = useState<boolean>(false)
+  const [dockFocused, setDockFocused] = useState<boolean>(false)
+  const [engaged, setEngaged] = useState<boolean>(false)
+  const [localDraft, setLocalDraft] = useState<string>('')
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const focusBarOnce = useRef<boolean>(false)
 
   const computeActive = () => {
     if (!bodyEl) return null
@@ -133,16 +146,16 @@ function FocusContent(props: any) {
     }
     return cur
   }
-  const isNearBottom = () => {
-    if (!bodyEl) return true
-    return bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 48
+  const bottomDistance = () => {
+    if (!bodyEl) return Number.POSITIVE_INFINITY
+    return bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight
   }
   const handleScroll = () => {
     if (rafId.current !== null) return
     rafId.current = requestAnimationFrame(() => {
       rafId.current = null
       setActiveKey(computeActive())
-      setAtBottom(isNearBottom())
+      setZone((prev) => bottomZoneAfter(prev, bottomDistance()))
     })
   }
   const scrollToKey = (key: string, smooth: boolean) => {
@@ -194,25 +207,40 @@ function FocusContent(props: any) {
     }
   }, [])
 
-  // ESC must exit focus mode on the first press, no matter where keyboard focus
-  // sits. A keydown handler on the overlay div only fires while focus is inside
-  // it, so right after opening — focus is still on the header toggle (or the
-  // composer/body) behind the full-screen overlay — the first ESC used to be
-  // swallowed until the user clicked into the content. Listen on window in the
-  // capture phase instead: it runs first regardless of focus target, and stops
-  // the hidden page behind from also reacting to ESC.
+  // Zone seed: runs after the mount-positioning effect above (effects fire in
+  // declaration order), so the dock's first form matches wherever the overlay
+  // actually opened — at the live edge or up in the history. Seeded with
+  // prev=false so "in zone" at mount means genuinely within the 48px enter
+  // threshold, not merely inside the hysteresis band.
   useEffect(() => {
-    overlayRef.current?.focus()
+    setZone(bodyEl ? bottomZoneAfter(false, bottomDistance()) : true)
+  }, [])
+
+  useEffect(() => { overlayRef.current?.focus() }, [])
+
+  // Esc peels one layer at a time (window capture, so it fires regardless of
+  // where keyboard focus sits): the answer card closes first (back to the
+  // waiting toast — the pending is still there), then an in-use input bar
+  // collapses (blur = collapse: the draft folds into the pill), and only an
+  // Esc with nothing engaged exits focus mode. The handler re-registers on the
+  // facts it reads so the peel order always matches the live dock.
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopPropagation()
-        focusStore.set(false)
-      }
+      if (e.key !== 'Escape') return
+      // Mid-IME-composition Esc cancels the composition, not the dock layer.
+      // Safari reports the composition-committing key with isComposing=false
+      // + keyCode 229, so guard both (official composer precedent).
+      if ((e as any).isComposing || (e as any).keyCode === 229) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (cardOpen) { setCardOpen(false); return }
+      if (dockFocused || engaged) { hideBar(); return }
+      focusStore.set(false)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+    // hideBar touches only setters and refs — safe to omit from deps.
+  }, [cardOpen, dockFocused, engaged])
 
   const loadImage = useCallback((attachment: any): Promise<string> => {
     if (!conversation || !currentId) return Promise.reject(new Error('dsh-focus-overlay: conversation service unavailable'))
@@ -229,6 +257,86 @@ function FocusContent(props: any) {
       })
     } catch { return undefined }
   }, [chatFileMentions, workspaces])
+
+  // ---- bottom dock wiring ----
+  // The bar shares the MAIN composer's draft through the official per-session
+  // input machine (conversation.input.for(binding.ctx)): text typed before
+  // entering focus mode is already in the bar, and text typed here is still in
+  // the main composer after leaving. Without the input service the bar falls
+  // back to a plugin-local draft sent through the session face's prompt verb.
+  const binding = useMemo(() => (sessions && currentId != null) ? sessions.binding(currentId) : undefined, [sessions, currentId])
+  const inputFace = useInputFace(conversation, binding && binding.ctx)
+  const inputState = useInputState(inputFace)
+  const draftValue = inputFace ? (inputState && typeof inputState.draft === 'string' ? inputState.draft : '') : localDraft
+  const draftEmpty = draftValue.trim() === ''
+  const pendingList: any[] = snap && snap.pending ? snap.pending : []
+  const pendingCount = pendingList.length
+  const wait = pendingCount > 0 ? pendingList[0] : null
+
+  const onDraftChange = (v: string) => {
+    if (inputFace) {
+      try { inputFace.setDraft(v); return } catch { /* fall through */ }
+    }
+    setLocalDraft(v)
+  }
+  const send = () => {
+    const text = draftValue
+    if (text.trim() === '') return
+    if (inputFace) {
+      // Official pipeline: adjudication, queue delivery, failure into the
+      // snapshot's promptError, draft handling — all the main composer gets.
+      try { inputFace.submit('queue'); return } catch { /* fall through */ }
+    }
+    const face = binding && binding.session
+    if (face) {
+      face.prompt([{ type: 'text', text }], 'queue')
+        .then((r: any) => { if (r && r.ok) setLocalDraft('') })
+        .catch(() => { /* failure lands in promptError */ })
+    }
+  }
+  const hideBar = () => {
+    // Esc peel for an in-use bar: blurring the textarea IS the collapse (a
+    // blurred bar with a draft folds into the pill via bottomForm), and the
+    // explicit flag clear covers a focus that never landed.
+    try { taRef.current && taRef.current.blur() } catch { /* ignore */ }
+    setEngaged(false)
+    setDockFocused(false)
+  }
+  const expandBar = () => { focusBarOnce.current = true; setEngaged(true) }
+  const onDockFocusChange = (f: boolean) => {
+    setDockFocused(f)
+    if (!f) setEngaged(false)
+  }
+
+  const queueCount = snap && snap.queue ? snap.queue.length : 0
+  const occCount = inputState && inputState.occurrences ? inputState.occurrences.length : 0
+  const promptErr = snap && snap.promptError && snap.promptError.op === 'send' ? snap.promptError.error : null
+  const errorLine = promptErr ? (promptErr.message || promptErr.code || 'send failed') : null
+  const form = bottomForm({ pending: pendingCount > 0, cardOpen, draftEmpty, inZone: zone, focused: dockFocused, engaged })
+
+  // The answer card lives only while its pending wait does — answered (even
+  // from elsewhere) the region falls back to the normal forms. A pending
+  // takeover also replaces the bar, whose textarea unmounts without blurring,
+  // so the focus/handoff flags are cleared explicitly — including the
+  // focus-once ref, or a pill click cancelled by this takeover would
+  // auto-focus the textarea unprompted when the bar next renders.
+  useEffect(() => {
+    if (pendingCount === 0) { if (cardOpen) setCardOpen(false); return }
+    focusBarOnce.current = false
+    setDockFocused(false)
+    setEngaged(false)
+  }, [pendingCount, cardOpen])
+
+  // Expand-on-click focus: landing the caret straight in the textarea saves a
+  // click for the pill → bar path. `engaged` is the one-render handoff only —
+  // once focus lands (or fails), focused-or-not takes over.
+  useEffect(() => {
+    if (form === 'bar' && focusBarOnce.current) {
+      focusBarOnce.current = false
+      try { taRef.current && taRef.current.focus() } catch { /* ignore */ }
+      setEngaged(false)
+    }
+  }, [form])
 
   let title = 'Focus Mode'
   if (currentId && listState && listState.byId && listState.byId[currentId]) {
@@ -302,18 +410,12 @@ function FocusContent(props: any) {
     )
     : null
 
-  const toBottom = (!atBottom)
-    ? (
-      <div className="fm-tobottom-wrap">
-        <Button variant="outline" size="sm" className="fm-tobottom" title={t('backToLatest')} onClick={scrollToBottom}>↓</Button>
-      </div>
-    )
-    : null
-
   // "AI is waiting for your reply" — a live state derived from the session's
-  // pending interactions. It shows while any question/approval is unanswered
-  // and clears by itself the moment the user answers (pending empties).
-  const waiting = hasPendingInteraction(snap)
+  // pending interactions. It shows while any question/approval is unanswered,
+  // and its button now morphs it into the in-place answer card instead of
+  // exiting focus mode. It hides while the card is open (the card IS the
+  // reply surface then) and clears by itself once the user answers.
+  const waiting = pendingCount > 0 && !cardOpen
 
   // "New reply ready" — a one-shot ping, cleared when the overlay closes so it
   // never re-appears on the next open.
@@ -338,7 +440,7 @@ function FocusContent(props: any) {
       <div className="fm-reply-toast">
         <span className="fm-reply-toast-dot" />
         <span className="fm-reply-toast-text">{t('reply.waiting')}</span>
-        <Button variant="primary" size="sm" onClick={() => focusStore.set(false)}>{t('reply.respond')}</Button>
+        <Button variant="primary" size="sm" onClick={() => setCardOpen(true)}>{t('answer.open')}</Button>
       </div>
     )
     : showDoneNotice
@@ -359,7 +461,27 @@ function FocusContent(props: any) {
       </div>
       <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={handleScroll}>{body}</div>
       {nav}
-      {toBottom}
+      {currentId && snap !== null ? (
+        <div className="fm-dock">
+          <FocusBottomDock
+            t={t}
+            width={prefs.width}
+            form={form}
+            wait={wait}
+            onCardClose={() => setCardOpen(false)}
+            draft={draftValue}
+            queueCount={queueCount}
+            occCount={occCount}
+            errorLine={errorLine}
+            textareaRef={taRef}
+            onFocusChange={onDockFocusChange}
+            onDraftChange={onDraftChange}
+            onSend={send}
+            onExpand={expandBar}
+            onJumpBottom={scrollToBottom}
+          />
+        </div>
+      ) : null}
       {replyNotice}
     </div>
   )

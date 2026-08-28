@@ -22,6 +22,7 @@
 - **Hide the header and composer** — a thin top bar remains, the input area is tucked away
 - **Fold tool calls** — an assistant turn collapses into a one-line summary
 - **Quick navigation** — a right-side node navbar with hover preview and click-to-jump
+- **In-focus composer** — a compact input dock appears at the live edge and shares the main composer's draft; click away and it folds into a dot, one click back; AI questions and approvals expand into an in-place answer card, so you never leave focus to reply
 - **Auto-focus & reminders** — after a reply completes, optionally auto-enter focus at your question; while in focus, get a toast for a new reply or when the AI is waiting on you
 - **Hotkey F** — press `F` anywhere to enter focus mode instantly (toggleable in settings); typing in an input never triggers it
 
@@ -56,13 +57,14 @@ Once in focus mode, an assistant turn no longer shows every step — it folds in
 | Tool-call folding | Tool calls / commands / context injections fold into a categorized summary line (commands / edits / searches / reads / directory listings / subagents / todos / goals / workflows / skills / questions / plans / background jobs) |
 | Precise scroll preservation | Opens at the message you're reading in the chat (aligned by `seq`), not from the top |
 | Right-side node navbar | One dot per user message; active pill follows scroll, hover preview, click to jump, auto-hidden under 2 messages |
-| Back to latest | A centered "↓ back to latest" floating button appears when you scroll away from the bottom |
+| Back to latest | A centered "↓" floating button when you scroll away from the bottom with no draft |
+| In-focus composer | The compact input bar appears at the live edge and shares the main composer's draft — `Enter` sends (queued while the AI runs); with a draft, clicking the conversation folds it into a blue-dot pill, one click to expand |
 | File mentions | Wires `chatFileMentions`, turning inline-code tokens that name real files into clickable links |
 | i18n | Chinese / English copy, follows the UI language |
 | Plugin configuration card | A collapsible card under "Settings → Plugins → Plugin configuration": navbar toggle, open-position strategy, text-area width — persisted to `localStorage` |
 | Auto-enter focus | After a reply **completes normally**, auto-open focus at your question; abnormal endings (stop / error / max-tokens / interrupt) never fire |
 | F hotkey | Press `F` anywhere to enter focus mode instantly (default on, toggleable in settings); never fires while typing in an input, auto-repeat ignored |
-| Reply / waiting reminders | In focus, a "New reply ready + View" toast on completion; an "AI is waiting for your reply + Reply" toast on a question/approval, auto-cleared once answered |
+| Reply / waiting reminders | In focus, a "New reply ready + View" toast on completion; a question/approval raises "AI is waiting for your reply + Answer", expanding an in-place answer card (options / free text / allow / deny) — auto-cleared once answered, never leaving focus |
 | DSH-better-sidebar compatibility | While in focus, auto-hide its top-right panel toggle buttons and any open right/bottom panels (and release the squeezed layout); restored on exit |
 
 ## Install
@@ -108,8 +110,9 @@ Restart `dsh web` after install.
 
 1. Open a session and click the **"Focus"** button in the session header action row (or press `F` — toggleable in settings).
 2. You enter the full-screen focus view: a thin top bar (session title + exit) and the conversation only, with tool steps folded into summary lines.
-3. Hover the right-side dots to preview, click to jump; a centered "↓ back to latest" button appears when you're not at the bottom.
-4. Press `Esc` or click "Exit focus" to return — the original UI is untouched.
+3. Hover the right-side dots to preview, click to jump; the compact input bar appears when you reach the very bottom (a "↓" button shows when you scroll away with no draft).
+4. Reply right in the bar: `Enter` sends, `Shift+Enter` newlines (queued while the AI runs), drafts shared with the main composer; clicking the conversation folds it into a blue-dot pill. AI questions/approvals raise an "Answer" card for in-place options, free text, or approvals.
+5. `Esc` peels back layer by layer (answer card → input bar → focus mode); or click "Exit focus" to return — the original UI is untouched.
 
 > **Compatibility note**: if [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) is also installed, entering focus mode auto-hides its two top-right panel toggle buttons and any open right/bottom panels (releasing the squeezed layout); they're restored as they were on exit, without touching that plugin's layout state.
 

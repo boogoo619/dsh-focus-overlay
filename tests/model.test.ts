@@ -314,3 +314,141 @@ describe('hotkeyShouldEnter', () => {
     expect(hotkeyShouldEnter({ ...base().e, repeat: true }, base().opts)).toBe(false)
   })
 })
+
+// ---- bottom dock form selection ----
+
+import {
+  bottomForm,
+  bottomZoneAfter,
+  BOTTOM_ENTER_PX,
+  BOTTOM_EXIT_PX,
+  questionAnswered,
+  allAnswered,
+  encodeAnswer,
+  parseRecommendedLabel,
+} from '../src/client/model'
+
+describe('bottomForm', () => {
+  const base = { pending: false, cardOpen: false, draftEmpty: true, inZone: false, focused: false, engaged: false }
+
+  it('pending owns the region: toast by default, card once opened', () => {
+    expect(bottomForm({ ...base, pending: true })).toBe('toast')
+    expect(bottomForm({ ...base, pending: true, cardOpen: true })).toBe('card')
+    // even with a draft / in zone / focused — a plain prompt cannot answer
+    expect(bottomForm({ ...base, pending: true, draftEmpty: false, inZone: true, focused: true })).toBe('toast')
+  })
+
+  it('a focused bar stays up regardless of draft or scroll position', () => {
+    expect(bottomForm({ ...base, focused: true })).toBe('bar')
+    expect(bottomForm({ ...base, focused: true, inZone: false })).toBe('bar')
+    expect(bottomForm({ ...base, focused: true, draftEmpty: false, inZone: false })).toBe('bar')
+  })
+
+  it('engaged (pill→bar handoff, focus not landed yet) shows the bar', () => {
+    expect(bottomForm({ ...base, engaged: true, draftEmpty: false, inZone: false })).toBe('bar')
+  })
+
+  it('empty bar inside the bottom zone is ambient chrome', () => {
+    expect(bottomForm({ ...base, inZone: true })).toBe('bar')
+  })
+
+  it('a draft alone no longer keeps the bar: blurred folds into the pill', () => {
+    expect(bottomForm({ ...base, draftEmpty: false })).toBe('pill')
+    // even at the live edge — clicking the conversation area collapsed it
+    expect(bottomForm({ ...base, draftEmpty: false, inZone: true })).toBe('pill')
+  })
+
+  it('no draft, out of zone, unfocused: jump-to-bottom', () => {
+    expect(bottomForm(base)).toBe('tobottom')
+  })
+})
+
+describe('bottomZoneAfter (hysteresis)', () => {
+  it('enters within the enter threshold', () => {
+    expect(bottomZoneAfter(false, 0)).toBe(true)
+    expect(bottomZoneAfter(false, BOTTOM_ENTER_PX)).toBe(true)
+  })
+
+  it('leaves beyond the exit threshold', () => {
+    expect(bottomZoneAfter(true, BOTTOM_EXIT_PX)).toBe(false)
+    expect(bottomZoneAfter(true, 10000)).toBe(false)
+  })
+
+  it('keeps the previous verdict between the thresholds (no flapping)', () => {
+    const mid = (BOTTOM_ENTER_PX + BOTTOM_EXIT_PX) / 2
+    expect(bottomZoneAfter(true, mid)).toBe(true)
+    expect(bottomZoneAfter(false, mid)).toBe(false)
+  })
+})
+
+describe('answer encoding', () => {
+  it('questionAnswered: selection or non-blank custom', () => {
+    expect(questionAnswered(undefined)).toBe(false)
+    expect(questionAnswered({ selected: [], custom: '' })).toBe(false)
+    expect(questionAnswered({ selected: [], custom: '   ' })).toBe(false)
+    expect(questionAnswered({ selected: ['A'], custom: '' })).toBe(true)
+    expect(questionAnswered({ selected: [], custom: 'free text' })).toBe(true)
+  })
+
+  it('allAnswered requires every question, and rejects empty batches', () => {
+    const qs = [{ id: 'a' }, { id: 'b' }]
+    expect(allAnswered([], {})).toBe(false)
+    expect(allAnswered(qs, {})).toBe(false)
+    expect(allAnswered(qs, { a: { selected: ['x'], custom: '' } })).toBe(false)
+    expect(allAnswered(qs, {
+      a: { selected: ['x'], custom: '' },
+      b: { selected: [], custom: 'note' },
+    })).toBe(true)
+    // skips null entries defensively
+    expect(allAnswered([null as any, { id: 'a' }], { a: { selected: ['x'], custom: '' } })).toBe(true)
+  })
+
+  it('encodeAnswer echoes labels verbatim (recommendation marker included) and trims custom', () => {
+    const qs = [
+      { id: 'q1', options: [{ label: 'A (Recommended)' }, { label: 'B' }] },
+      { id: 'q2' },
+    ]
+    const drafts = {
+      q1: { selected: ['A (Recommended)'], custom: '  extra  ' },
+      q2: { selected: [], custom: 'plain' },
+    }
+    // q1 is single-select WITH custom → the official exclusivity rule clears
+    // `selected` (option or custom, never both); q2 has no options at all.
+    expect(encodeAnswer(qs, drafts)).toEqual({
+      answers: [
+        { id: 'q1', selected: [], custom: 'extra' },
+        { id: 'q2', selected: [], custom: 'plain' },
+      ],
+    })
+  })
+
+  it('encodeAnswer keeps selection and custom together only for multi-select', () => {
+    const qs = [
+      { id: 's', multiSelect: false },
+      { id: 'm', multiSelect: true },
+    ]
+    const drafts = {
+      s: { selected: ['x'], custom: 'note' },
+      m: { selected: ['x', 'y'], custom: 'note' },
+    }
+    expect(encodeAnswer(qs, drafts)).toEqual({
+      answers: [
+        { id: 's', selected: [], custom: 'note' },
+        { id: 'm', selected: ['x', 'y'], custom: 'note' },
+      ],
+    })
+  })
+
+  it('encodeAnswer omits blank custom and defaults missing drafts to empty', () => {
+    expect(encodeAnswer([{ id: 'q' }], {})).toEqual({ answers: [{ id: 'q', selected: [] }] })
+  })
+
+  it('parseRecommendedLabel splits the marker for display only (lenient, official-style)', () => {
+    expect(parseRecommendedLabel('A (Recommended)')).toEqual({ label: 'A', recommended: true })
+    expect(parseRecommendedLabel('A (recommended)')).toEqual({ label: 'A', recommended: true })
+    expect(parseRecommendedLabel('A（推荐）')).toEqual({ label: 'A', recommended: true })
+    expect(parseRecommendedLabel('B')).toEqual({ label: 'B', recommended: false })
+    // the marker alone is not a recommendation marker
+    expect(parseRecommendedLabel(' (Recommended)')).toEqual({ label: ' (Recommended)', recommended: false })
+  })
+})

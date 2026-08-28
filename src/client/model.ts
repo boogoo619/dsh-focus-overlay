@@ -235,3 +235,127 @@ export function hotkeyShouldEnter(
   const k = typeof e.key === 'string' ? e.key : ''
   return k === 'f' || k === 'F'
 }
+
+// ---- bottom dock: the focus-mode composer region ----
+
+/** Which form the bottom-center dock takes. The forms are mutually exclusive;
+ *  `bottomForm` below is the single authority for which one renders. */
+export type BottomForm = 'card' | 'toast' | 'bar' | 'pill' | 'tobottom'
+
+/**
+ * Decide the bottom dock's form from the live facts. Priority order mirrors the
+ * agreed design:
+ *
+ * 1. pending (the AI is blocked waiting) owns the region — the answer card when
+ *    the user opened it (the waiting toast morphs in place), otherwise the
+ *    waiting toast itself. A plain prompt cannot answer `ask_user_question`, so
+ *    while pending the input bar is suppressed entirely (the official main view
+ *    likewise lets the question UI take over the composer seat).
+ * 2. the input bar while the user is IN it: focused, or the one-render handoff
+ *    from a pill click (`engaged`, focus not landed yet). With a draft this is
+ *    the only thing that keeps the bar up — clicking the conversation area
+ *    blurs the textarea and the bar folds itself into the pill (draft safe,
+ *    blue dot, one click back). There is no manual hide.
+ * 3. also the bar, as ambient chrome, while empty and reading at the live
+ *    edge — a slim placeholder offering the composer.
+ * 4. otherwise: a draft (unfocused) shows the pill; no draft and scrolled away
+ *    shows the jump-to-bottom button.
+ */
+export function bottomForm(o: {
+  pending: boolean
+  cardOpen: boolean
+  draftEmpty: boolean
+  inZone: boolean
+  focused: boolean
+  engaged: boolean
+}): BottomForm {
+  if (o.pending) return o.cardOpen ? 'card' : 'toast'
+  if (o.engaged || o.focused || (o.draftEmpty && o.inZone)) return 'bar'
+  return o.draftEmpty ? 'tobottom' : 'pill'
+}
+
+/** Distance from the scroll end that counts as "at the bottom" (entering). */
+export const BOTTOM_ENTER_PX = 48
+/** Distance beyond which the reader has left the bottom zone (leaving). */
+export const BOTTOM_EXIT_PX = 160
+
+/**
+ * Bottom-zone membership with hysteresis: entering requires the viewport edge
+ * within {@link BOTTOM_ENTER_PX} of the scroll end, leaving requires drifting
+ * past {@link BOTTOM_EXIT_PX}. Between the two thresholds the previous verdict
+ * stands, so slow scrolling near the end (or streaming content quietly growing
+ * the scrollHeight under a still reader) never flaps the dock between forms.
+ */
+export function bottomZoneAfter(prev: boolean, distance: number): boolean {
+  if (distance <= BOTTOM_ENTER_PX) return true
+  if (distance >= BOTTOM_EXIT_PX) return false
+  return prev
+}
+
+// ---- pending answer encoding (question/respond wire shape) ----
+
+/** The answer card's local, per-question edit state. Independent of the shared
+ *  composer draft on purpose: the custom text is part of the answer payload
+ *  (`custom`), submitted-and-cleared with the batch, never a prompt draft. */
+export interface AnswerDraft {
+  selected: string[]
+  custom: string
+}
+
+/** A question is answered when at least one option is selected or the custom
+ *  text is non-blank — the same completeness rule the official question
+ *  composer applies before enabling submit. */
+export function questionAnswered(d: AnswerDraft | undefined): boolean {
+  if (!d) return false
+  if (d.selected.length > 0) return true
+  return d.custom.trim() !== ''
+}
+
+/** The whole batch must be answered: one `ask()` is one answer covering every
+ *  question, never split per question. An empty question list is never
+ *  complete (nothing to send — submit stays disabled); malformed null entries
+ *  are skipped, matching encodeAnswer, so one bad row cannot deadlock the
+ *  answerable majority. */
+export function allAnswered(questions: any[], drafts: Record<string, AnswerDraft>): boolean {
+  if (!questions || questions.length === 0) return false
+  for (const q of questions) {
+    if (!q) continue
+    if (!questionAnswered(drafts[q.id])) return false
+  }
+  return true
+}
+
+/**
+ * Encode the complete answer batch in the wire shape `question/respond`
+ * expects (`AskUserQuestionAnswer`). Mirrors the official encoder's
+ * exclusivity rule: a single-select question carries EITHER the selected
+ * option OR the custom text (`selected` is cleared when custom is present —
+ * never both, which would be a contradictory answer); multi-select may carry
+ * both. Option labels go back verbatim — the harness's recommendation suffix
+ * is part of the label the asker must see echoed — and custom text is sent
+ * trimmed, only when present.
+ */
+export function encodeAnswer(questions: any[], drafts: Record<string, AnswerDraft>): { answers: Array<{ id: string; selected: string[]; custom?: string }> } {
+  const answers: Array<{ id: string; selected: string[]; custom?: string }> = []
+  for (const q of questions || []) {
+    if (!q) continue
+    const d = drafts[q.id] || { selected: [], custom: '' }
+    const custom = d.custom.trim()
+    const selected = (custom === '' || q.multiSelect) ? [...d.selected] : []
+    const item: { id: string; selected: string[]; custom?: string } = { id: q.id, selected }
+    if (custom) item.custom = custom
+    answers.push(item)
+  }
+  return { answers }
+}
+
+/** Split the harness's recommendation marker off an option label for display
+ *  (the marker becomes a badge); the full label stays what the wire echoes
+ *  back. Lenient like the official parser: ASCII or full-width parentheses,
+ *  "recommended" in any case, or the Chinese 推荐. */
+export function parseRecommendedLabel(label: string): { label: string; recommended: boolean } {
+  if (typeof label !== 'string') return { label, recommended: false }
+  const rest = label.replace(/\s*[（(]\s*(?:recommended|推荐)\s*[)）]\s*$/i, '')
+  if (rest === label || rest === '') return { label, recommended: false }
+  return { label: rest, recommended: true }
+}
