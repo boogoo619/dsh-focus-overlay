@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore, onboardingStore } from './settings'
 import type { FocusTranslate } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, bottomForm, bottomZoneAfter } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, bottomForm, bottomZoneAfter, activeNavIndex } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 
 // ---- shared focus state (module scope; the overlay and the header toggle read it) ----
@@ -134,23 +134,31 @@ function FocusContent(props: any) {
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const focusBarOnce = useRef<boolean>(false)
 
+  // Measurement only: collect the anchors' viewport-relative tops (a stale key
+  // keeps its slot as Infinity so indices stay aligned with navKeys) and hand
+  // the decision to activeNavIndex, which force-lights the last dot near the
+  // scroll end — a short final turn can never push its anchor up to the top
+  // line on its own. A bottom-forced index is mapped back to the nearest
+  // anchor that still exists.
   const computeActive = () => {
     if (!bodyEl) return null
-    let cur: string | null = null
-    for (const k of navKeys) {
+    const bodyTop = bodyEl.getBoundingClientRect().top
+    const tops = navKeys.map((k) => {
       const el = anchors[k]
-      if (!el) continue
-      const top = el.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top
-      if (top <= 96) cur = k
-      else break
-    }
-    return cur
+      return el ? el.getBoundingClientRect().top - bodyTop : Number.POSITIVE_INFINITY
+    })
+    const i = activeNavIndex(tops, bottomDistance())
+    for (let j = i; j >= 0; j--) { if (anchors[navKeys[j]]) return navKeys[j] }
+    return null
   }
   const bottomDistance = () => {
     if (!bodyEl) return Number.POSITIVE_INFINITY
     return bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight
   }
-  const handleScroll = () => {
+  // The single recompute path — nav highlight and dock zone together, coalesced
+  // to one run per frame. Scroll, resize, and content updates all land here so
+  // the two never disagree about where the reader is.
+  const scheduleRecompute = () => {
     if (rafId.current !== null) return
     rafId.current = requestAnimationFrame(() => {
       rafId.current = null
@@ -158,6 +166,10 @@ function FocusContent(props: any) {
       setZone((prev) => bottomZoneAfter(prev, bottomDistance()))
     })
   }
+  // Long-lived listeners (the resize observer below) must reach the LATEST
+  // closure — navKeys is rebuilt per render — so they read through this ref.
+  const scheduleRef = useRef<() => void>(scheduleRecompute)
+  useEffect(() => { scheduleRef.current = scheduleRecompute })
   const scrollToKey = (key: string, smooth: boolean) => {
     const el = anchors[key]
     if (!el || !bodyEl) return
@@ -214,6 +226,24 @@ function FocusContent(props: any) {
   // threshold, not merely inside the hysteresis band.
   useEffect(() => {
     setZone(bodyEl ? bottomZoneAfter(false, bottomDistance()) : true)
+  }, [])
+
+  // Layout changes that never fire scroll must still recompute: a window
+  // resize reshapes the scrollport, a width-pref change reflows the content,
+  // and a streaming snapshot swaps messages out from under a stale highlight.
+  // All of it funnels through the same rAF-coalesced path as scrolling.
+  useEffect(() => {
+    const el = bodyEl
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => scheduleRef.current())
+    ro.observe(el)
+    return () => ro.disconnect()
+    // scheduleRef is read through the ref — safe to run once.
+  }, [])
+  useEffect(() => { scheduleRef.current() }, [snap, prefs.width])
+  // A scroll scheduled for after unmount must not touch removed state.
+  useEffect(() => () => {
+    if (rafId.current !== null) { cancelAnimationFrame(rafId.current); rafId.current = null }
   }, [])
 
   useEffect(() => { overlayRef.current?.focus() }, [])
@@ -463,7 +493,7 @@ function FocusContent(props: any) {
         <div className="fm-title">{title}</div>
         <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
       </div>
-      <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={handleScroll}>{body}</div>
+      <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={scheduleRecompute}>{body}</div>
       {nav}
       {currentId && snap !== null ? (
         <div className="fm-dock">

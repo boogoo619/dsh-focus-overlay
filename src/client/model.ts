@@ -292,6 +292,51 @@ export function bottomZoneAfter(prev: boolean, distance: number): boolean {
   return prev
 }
 
+/** How close to the scrollport's top an anchor must sit to own the nav
+ *  highlight (topbar height plus breathing room). */
+export const NAV_TOP_PX = 96
+
+/**
+ * Index of the conversation-turn dot the nav rail should highlight, from live
+ * scroll geometry. The rail is a position indicator, so the decision is pure
+ * math over measured anchor tops (document order) plus the distance to the
+ * scroll end:
+ *
+ * 1. Bottom force: within {@link BOTTOM_ENTER_PX} of the scroll end the last
+ *    turn owns the highlight, whatever its height. Without this rule a short
+ *    final turn could never light its own dot — with less than a viewport of
+ *    content below its anchor, that anchor physically cannot reach the top
+ *    threshold even pinned at the very bottom, so the highlight would stick
+ *    to an earlier turn forever.
+ * 2. Geometric scan: the last anchor whose top sits at/above the
+ *    {@link NAV_TOP_PX} line — "which turn is at the top of the viewport".
+ *    Non-finite entries (a stale anchor slot after the item list shifted) are
+ *    skipped without stopping the scan, matching the old ref-null behavior.
+ * 3. Top clamp: every real anchor still below the line means the reader is
+ *    above the first message's threshold (scrollTop ≈ 0 with leading
+ *    padding), and the first turn owns the position.
+ *
+ * A bottom-forced index may land on a stale slot; the caller maps it back to
+ * the nearest existing anchor.
+ */
+export function activeNavIndex(
+  tops: number[],
+  bottomDistance: number,
+  topPx: number = NAV_TOP_PX,
+  bottomPx: number = BOTTOM_ENTER_PX,
+): number {
+  if (!tops.length) return -1
+  if (bottomDistance <= bottomPx) return tops.length - 1
+  let cur = -1
+  for (let i = 0; i < tops.length; i++) {
+    const top = tops[i]
+    if (!Number.isFinite(top)) continue
+    if (top <= topPx) cur = i
+    else break
+  }
+  return cur >= 0 ? cur : 0
+}
+
 // ---- pending answer encoding (question/respond wire shape) ----
 
 /** The answer card's local, per-question edit state. Independent of the shared

@@ -322,6 +322,8 @@ import {
   bottomZoneAfter,
   BOTTOM_ENTER_PX,
   BOTTOM_EXIT_PX,
+  NAV_TOP_PX,
+  activeNavIndex,
   questionAnswered,
   allAnswered,
   encodeAnswer,
@@ -378,6 +380,48 @@ describe('bottomZoneAfter (hysteresis)', () => {
     const mid = (BOTTOM_ENTER_PX + BOTTOM_EXIT_PX) / 2
     expect(bottomZoneAfter(true, mid)).toBe(true)
     expect(bottomZoneAfter(false, mid)).toBe(false)
+  })
+})
+
+describe('activeNavIndex', () => {
+  const INF = Number.POSITIVE_INFINITY
+
+  it('returns -1 when there are no dots', () => {
+    expect(activeNavIndex([], 0)).toBe(-1)
+  })
+
+  it('picks the last anchor at/above the top line (geometric scan)', () => {
+    expect(activeNavIndex([10, 50, 90, 400], 10000)).toBe(2)
+    expect(activeNavIndex([NAV_TOP_PX, 500], 10000)).toBe(0) // exactly on the line counts
+  })
+
+  it('skips stale anchor slots (Infinity) without stopping the scan', () => {
+    expect(activeNavIndex([10, INF, 90], 10000)).toBe(2)
+    expect(activeNavIndex([10, INF, 500], 10000)).toBe(0)
+  })
+
+  it('clamps to the first dot when every anchor is below the line', () => {
+    expect(activeNavIndex([200, 800, 1400], 10000)).toBe(0)
+  })
+
+  it('bottom force: within the enter threshold the last dot owns the highlight', () => {
+    expect(activeNavIndex([10, 200, 800], 0)).toBe(2)
+    expect(activeNavIndex([10, 200, 800], BOTTOM_ENTER_PX)).toBe(2)
+  })
+
+  it('a short final turn pinned at the bottom lights its own dot', () => {
+    // Geometry alone would stick to the first turn — the last anchor can never
+    // reach the top line with less than a viewport of content below it.
+    expect(activeNavIndex([50, 300, 420], 10000)).toBe(0)
+    expect(activeNavIndex([50, 300, 420], 0)).toBe(2)
+  })
+
+  it('just past the enter threshold falls back to geometry', () => {
+    expect(activeNavIndex([10, 200], BOTTOM_ENTER_PX + 0.01)).toBe(0)
+  })
+
+  it('non-finite bottom distance degrades to pure geometry', () => {
+    expect(activeNavIndex([10, 50], INF)).toBe(1)
   })
 })
 
