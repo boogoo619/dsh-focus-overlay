@@ -13,7 +13,32 @@ export const FOCUS_CSS = `
 .fm-image{max-width:100%;border-radius:8px;margin:8px 0}
 .fm-hidden{text-align:center;color:var(--dsw-alias-label-secondary,#888);font-size:12px;line-height:1.6;margin:6px 0 18px;user-select:none}
 .fm-error{color:var(--dsw-alias-state-error-primary,#d23);font-size:13px;white-space:pre-wrap}
-.fm-running{color:var(--dsw-alias-label-secondary,#888);font-size:13px;margin:6px 0 16px}
+/* "正在工作" live line — the shimmer is a 1:1 replica of the official
+   generating indicator in dsh-client-ui-conversation (the "Deep Diving"
+   turn-status): brand-blue text (--dsw-static-deepseek-500) with a light
+   highlight (--dsw-static-deepseek-200) sweeping through — gradient stops
+   0/40/50/60/100 on a 250% tile, background-position 100%→0, 1.8s linear,
+   font --dsw-font-s-strong-14 (500 14px/22px). The official class name
+   (Md3f7G_turnStatus) is a per-build CSS-modules hash, so reusing it would
+   break silently on dsh updates — the declarations are copied verbatim onto
+   our own class using the same theme tokens instead. The flanking short
+   dashes are part of the same shimmer span, so the sweep covers dashes and
+   label as one unit. Fallbacks: no background-clip:text → secondary gray
+   label; prefers-reduced-motion → animation off, label stays solid
+   deepseek-500 (the official base color). */
+.fm-running{text-align:center;margin:10px 0 20px;user-select:none;animation:fm-up .18s ease}
+.fm-running-text{color:var(--dsw-alias-label-secondary,#888);font:var(--dsw-font-s-strong-14,500 14px/22px var(--dsw-font-family,sans-serif));white-space:nowrap}
+/* Dashes: separate spans with fixed margins instead of space characters — in
+   CJK/Latin mixed runs the browser itemizes the two U+0020 spaces into
+   different fonts (one Latin-narrow, one Han-wide), and the Han font's en
+   dash glyph is left-biased, which made the two gaps visually unequal. The
+   forced Latin-first stack renders a symmetric en dash; margins are exact. */
+.fm-running-dash{font-family:system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;margin:0 8px}
+@supports ((-webkit-background-clip:text) or (background-clip:text)){
+.fm-running-text{background:linear-gradient(90deg,var(--dsw-static-deepseek-500,#4176e6) 0%,var(--dsw-static-deepseek-500,#4176e6) 40%,var(--dsw-static-deepseek-200,#d3e2ff) 50%,var(--dsw-static-deepseek-500,#4176e6) 60%,var(--dsw-static-deepseek-500,#4176e6) 100%);color:#0000;-webkit-text-fill-color:transparent;background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:fm-sweep 1.8s linear infinite}
+}
+@keyframes fm-sweep{to{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){.fm-running{animation:none}.fm-running-text{background:0 0;color:var(--dsw-static-deepseek-500,#4176e6);-webkit-text-fill-color:currentColor;animation:none}}
 .fm-empty{color:var(--dsw-alias-label-secondary,#888);padding:48px 16px;text-align:center}
 .fm-nav{position:absolute;right:20px;top:50%;transform:translateY(-50%);display:block;width:16px;z-index:2;pointer-events:auto;transition:transform .18s ease}
 .fm-nav:hover{transform:translateY(-50%) translateX(-6px)}

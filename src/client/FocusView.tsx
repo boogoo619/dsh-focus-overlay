@@ -381,7 +381,11 @@ function FocusContent(props: any) {
       kids.push(<AssistantItem key="fm-partial" blocks={partialBlocks} loadImage={loadImage} fileMentions={undefined} />)
     }
     if (running) {
-      kids.push(<div key="fm-running" className="fm-running">{t('running')}</div>)
+      kids.push(
+        <div key="fm-running" className="fm-running" role="status">
+          <span className="fm-running-text"><span className="fm-running-dash" aria-hidden="true">–</span>{t('running')}<span className="fm-running-dash" aria-hidden="true">–</span></span>
+        </div>,
+      )
     }
     body = <div className="fm-inner" style={{ maxWidth: prefs.width }}>{kids}</div>
   }
