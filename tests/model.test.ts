@@ -9,6 +9,7 @@ import {
   resolveAnchorSeq,
   lastUserSeq,
   lastUserIndex,
+  lastPromptSeq,
   detectSettledCompletion,
   hasPendingInteraction,
   onboardingSeen,
@@ -163,6 +164,30 @@ describe('lastUserIndex', () => {
   })
   it('returns -1 when no user item exists', () => {
     expect(lastUserIndex([{ kind: 'assistant', blocks: [], seq: 1, turn: 1, step: 1 }] as any)).toBe(-1)
+  })
+})
+
+describe('lastPromptSeq', () => {
+  it('returns the newest user or steering seq (steering counts as a prompt)', () => {
+    const items = [
+      { kind: 'user', text: 'a', seq: 1 },
+      { kind: 'assistant', blocks: [], seq: 2, turn: 1, step: 1 },
+      { kind: 'steering', text: 'b', seq: 3 },
+    ] as any
+    expect(lastPromptSeq(items)).toBe(3)
+  })
+  it('returns the last user seq when it is the newest prompt row', () => {
+    const items = [
+      { kind: 'steering', text: 'a', seq: 1 },
+      { kind: 'user', text: 'b', seq: 5 },
+      { kind: 'assistant', blocks: [], seq: 6, turn: 1, step: 1 },
+    ] as any
+    expect(lastPromptSeq(items)).toBe(5)
+  })
+  it('returns null when no prompt row exists', () => {
+    expect(lastPromptSeq([{ kind: 'assistant', blocks: [], seq: 1, turn: 1, step: 1 }] as any)).toBe(null)
+    expect(lastPromptSeq([{ kind: 'hidden', text: 'x' }] as any)).toBe(null)
+    expect(lastPromptSeq([])).toBe(null)
   })
 })
 
@@ -324,11 +349,14 @@ import {
   BOTTOM_EXIT_PX,
   NAV_TOP_PX,
   activeNavIndex,
+  shouldRevealSentPrompt,
+  REVEAL_RESERVE_PX,
   questionAnswered,
   allAnswered,
   encodeAnswer,
   parseRecommendedLabel,
 } from '../src/client/model'
+import { FOCUS_CSS } from '../src/client/styles'
 
 describe('bottomForm', () => {
   const base = { pending: false, cardOpen: false, draftEmpty: true, inZone: false, focused: false, engaged: false }
@@ -380,6 +408,43 @@ describe('bottomZoneAfter (hysteresis)', () => {
     const mid = (BOTTOM_ENTER_PX + BOTTOM_EXIT_PX) / 2
     expect(bottomZoneAfter(true, mid)).toBe(true)
     expect(bottomZoneAfter(false, mid)).toBe(false)
+  })
+})
+
+describe('shouldRevealSentPrompt (send reveal decision)', () => {
+  // Base facts of the reported bug: the reader sat at the bottom (armed), the
+  // last prompt they saw was seq 10, and the sent row just rendered as seq 12.
+  const base = { armed: true, prevSeq: 10, nextSeq: 12 }
+
+  it('fires when armed and the newest prompt seq advanced', () => {
+    expect(shouldRevealSentPrompt(base)).toBe(true)
+  })
+
+  it('fires for the first message of an empty conversation (prev null)', () => {
+    expect(shouldRevealSentPrompt({ armed: true, prevSeq: null, nextSeq: 1 })).toBe(true)
+  })
+
+  it('stays quiet while the sent row has not rendered yet (seq unchanged)', () => {
+    // Streaming snapshots between the click and delivery re-run the effect
+    // with the same newest prompt — no premature scroll.
+    expect(shouldRevealSentPrompt({ ...base, nextSeq: 10 })).toBe(false)
+  })
+
+  it('stays quiet when not armed (mount, ordinary history, send from up in history)', () => {
+    expect(shouldRevealSentPrompt({ ...base, armed: false })).toBe(false)
+  })
+
+  it('stays quiet when no prompt row exists at all', () => {
+    expect(shouldRevealSentPrompt({ ...base, nextSeq: null })).toBe(false)
+  })
+
+  it('REVEAL_RESERVE_PX stays in sync with .fm-body bottom padding (dock clearance)', () => {
+    // The reserve is only correct as long as it matches the scrollport's own
+    // bottom padding — the layout's contract for "clear of the dock". If this
+    // fails, update both together.
+    const block = FOCUS_CSS.match(/\.fm-body\{[^}]*\}/)?.[0] ?? ''
+    const pad = block.match(/padding:([^;}]+)/)?.[1] ?? ''
+    expect(parseInt(pad.trim().split(/\s+/)[2], 10)).toBe(REVEAL_RESERVE_PX)
   })
 })
 

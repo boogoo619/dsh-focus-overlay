@@ -58,7 +58,7 @@ Once in focus mode, an assistant turn no longer shows every step — it folds in
 | Precise scroll preservation | Opens at the message you're reading in the chat (aligned by `seq`), not from the top |
 | Right-side node navbar | One dot per user message; active pill follows scroll, hover preview, click to jump, auto-hidden under 2 messages |
 | Back to latest | A centered "↓" floating button when you scroll away from the bottom with no draft |
-| In-focus composer | The compact input bar appears at the live edge and shares the main composer's draft — `Enter` sends (queued while the AI runs); with a draft, clicking the conversation folds it into a blue-dot pill, one click to expand |
+| In-focus composer | The compact input bar appears at the live edge and shares the main composer's draft — `Enter` sends (queued while the AI runs); with a draft, clicking the conversation folds it into a blue-dot pill, one click to expand; sending from the live edge auto-scrolls just enough to fully reveal the message you sent, never hidden behind the bar |
 | File mentions | Wires `chatFileMentions`, turning inline-code tokens that name real files into clickable links |
 | i18n | Chinese / English copy, follows the UI language |
 | Plugin configuration card | A collapsible card under "Settings → Plugins → Plugin configuration": navbar toggle, open-position strategy, text-area width — persisted to `localStorage` |

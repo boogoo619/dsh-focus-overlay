@@ -153,6 +153,19 @@ export function lastUserIndex(items: FocusItem[]): number {
   return -1
 }
 
+/** Seq of the newest prompt row (user OR steering) in an already-built focus
+ *  list — the row a just-sent message occupies once it renders. Unlike
+ *  {@link lastUserSeq} (raw nodes), this reads the rendered list, so a blank
+ *  prompt or an unsent queue entry is already filtered out. Null when no
+ *  prompt row exists. */
+export function lastPromptSeq(items: FocusItem[]): number | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it.kind === 'user' || it.kind === 'steering') return it.seq
+  }
+  return null
+}
+
 export interface SettledOutcome {
   /** The snapshot is stable: the last assistant step has finalized or frozen,
    *  so its node is already in `nodes` and `partial` is empty. Only a stable
@@ -290,6 +303,26 @@ export function bottomZoneAfter(prev: boolean, distance: number): boolean {
   if (distance <= BOTTOM_ENTER_PX) return true
   if (distance >= BOTTOM_EXIT_PX) return false
   return prev
+}
+
+/** Bottom clearance a revealed row must keep inside the scrollport: the dock
+ *  overlays roughly the last 110px of `.fm-body` (the padding-bottom reserves
+ *  exactly this much), so a row whose bottom sits above this line is fully
+ *  readable with the dock in any of its collapsed forms. Keep in sync with
+ *  `.fm-body`'s padding in styles.ts. */
+export const REVEAL_RESERVE_PX = 110
+
+/**
+ * Whether the overlay should scroll to uncover the just-sent prompt row. The
+ * send path arms the reveal only while the reader sits in the bottom zone
+ * (sending from up in history must never yank the view), and the reveal fires
+ * only once the newest prompt seq has advanced — the sent row has actually
+ * rendered; delivery can lag the click by a snapshot or two through queue
+ * adjudication. An unchanged seq (ordinary streaming snapshots, mount) or an
+ * unarmed state never scrolls.
+ */
+export function shouldRevealSentPrompt(o: { armed: boolean; prevSeq: number | null; nextSeq: number | null }): boolean {
+  return o.armed && o.nextSeq != null && o.nextSeq !== o.prevSeq
 }
 
 /** How close to the scrollport's top an anchor must sit to own the nav

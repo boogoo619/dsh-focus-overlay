@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore, onboardingStore } from './settings'
 import type { FocusTranslate } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, bottomForm, bottomZoneAfter, activeNavIndex } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 
 // ---- shared focus state (module scope; the overlay and the header toggle read it) ----
@@ -133,6 +133,13 @@ function FocusContent(props: any) {
   const [localDraft, setLocalDraft] = useState<string>('')
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const focusBarOnce = useRef<boolean>(false)
+  // Send-reveal ledger (refs, not state — they bookkeep between renders and
+  // must never trigger one): a send issued while the reader sits in the bottom
+  // zone arms the reveal, and `seenPromptSeq` remembers the newest prompt
+  // row's seq so the reveal effect can tell "the sent row just rendered"
+  // apart from ordinary streaming snapshots.
+  const revealArmed = useRef<boolean>(false)
+  const seenPromptSeq = useRef<number | null>(null)
 
   // Measurement only: collect the anchors' viewport-relative tops (a stale key
   // keeps its slot as Infinity so indices stay aligned with navKeys) and hand
@@ -241,6 +248,31 @@ function FocusContent(props: any) {
     // scheduleRef is read through the ref — safe to run once.
   }, [])
   useEffect(() => { scheduleRef.current() }, [snap, prefs.width])
+
+  // Reveal-on-send: while the reader sits at the live edge, a prompt sent from
+  // the dock must land fully on screen. The scrollport keeps its scrollTop
+  // while the new row grows the document below the fold, so a long multi-line
+  // message would end up half hidden behind the dock and half past the
+  // viewport's bottom edge. The send path arms the reveal (bottom zone only);
+  // this effect fires it on the snapshot where the newest prompt seq actually
+  // advances, scrolling the minimum distance that lifts the row's bottom clear
+  // of the dock reserve — then disarms, so later snapshots (streaming growth)
+  // never scroll again.
+  useEffect(() => {
+    const seq = lastPromptSeq(items)
+    if (seq != null && shouldRevealSentPrompt({ armed: revealArmed.current, prevSeq: seenPromptSeq.current, nextSeq: seq })) {
+      revealArmed.current = false
+      const idx = findSeqIndex(items, seq)
+      const el = idx >= 0 ? anchors['fm-' + idx] : undefined
+      if (el && bodyEl) {
+        const limit = bodyEl.getBoundingClientRect().bottom - REVEAL_RESERVE_PX
+        const hidden = el.getBoundingClientRect().bottom - limit
+        if (hidden > 0) bodyEl.scrollBy({ top: hidden, behavior: 'smooth' })
+      }
+    }
+    seenPromptSeq.current = seq
+  }, [items])
+
   // A scroll scheduled for after unmount must not touch removed state.
   useEffect(() => () => {
     if (rafId.current !== null) { cancelAnimationFrame(rafId.current); rafId.current = null }
@@ -312,6 +344,10 @@ function FocusContent(props: any) {
   const send = () => {
     const text = draftValue
     if (text.trim() === '') return
+    // Sending from the live edge: arm the send-reveal so the row scrolls fully
+    // into view once delivery renders it (see the reveal-on-send effect).
+    // Sends from up in the history never arm — the reader's place is sacred.
+    if (zone) revealArmed.current = true
     if (inputFace) {
       // Official pipeline: adjudication, queue delivery, failure into the
       // snapshot's promptError, draft handling — all the main composer gets.
