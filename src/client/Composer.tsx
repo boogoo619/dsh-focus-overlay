@@ -280,6 +280,19 @@ function InputBar(props: {
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`
   }
+  // The shared-draft path (onChange → inputFace.setDraft) rewrites the MAIN
+  // composer's Lexical editor. Its discrete commit also moves the DOM text
+  // selection into that hidden editor, which BLURS this textarea — so the very
+  // first keystroke folded the bar into the pill (blur = collapse via
+  // bottomForm). After each echo, restore the caret here if the editor stole
+  // it: blur→focus fire inside this one handler, so the dock's focused flag
+  // never observes the theft and the bar stays up while the user types.
+  const refocusAfterEcho = (el: HTMLTextAreaElement) => {
+    if (document.activeElement === el) return
+    el.focus()
+    const end = el.value.length
+    el.setSelectionRange(end, end)
+  }
   // Re-fit on every value change, not just local edits: the shared draft can
   // arrive pre-filled (typed in the main composer before entering focus mode),
   // and the textarea must size to it without a keystroke.
@@ -303,7 +316,7 @@ function InputBar(props: {
           rows={1}
           value={value}
           placeholder={t('composer.placeholder')}
-          onChange={(e) => { onChange(e.target.value); autoGrow(e.target) }}
+          onChange={(e) => { onChange(e.target.value); autoGrow(e.target); refocusAfterEcho(e.target) }}
           onKeyDown={onKeyDown}
           onFocus={() => onFocusChange(true)}
           onBlur={() => onFocusChange(false)}
