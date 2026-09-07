@@ -20,8 +20,8 @@
  * session face's `prompt` verb — the same wire call the official default sink
  * makes.
  */
-import { useEffect, useMemo, useState } from 'react'
-import type { MutableRefObject, KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { MutableRefObject, ChangeEvent as ReactChangeEvent, CompositionEvent as ReactCompositionEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Button, IconCheckOutline14, IconChevronDownOutline14, IconEditOutline16, IconSendOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { FocusTranslate } from './locales'
 import { allAnswered, encodeAnswer, parseRecommendedLabel, type AnswerDraft } from './model'
@@ -263,7 +263,39 @@ function InputBar(props: {
   onSend: () => void
 }) {
   const { t, width, value, queueCount, occCount, errorLine, textareaRef, onFocusChange, onChange, onSend } = props
-  const empty = value.trim() === ''
+
+  // ---- IME composition shield ----
+  // An IME composition needs UNBROKEN focus on this textarea. But every
+  // shared-draft echo (onChange → inputFace.setDraft) makes the main composer's
+  // hidden Lexical editor commit a discrete selection update that steals DOM
+  // focus — killing the composition session outright (the candidate window
+  // vanishes and only raw latin reaches the draft). So while composing, edits
+  // stay in a local override and are NOT echoed to the store; the whole final
+  // text is flushed once on compositionend (or on send/blur safety flushes).
+  const composingRef = useRef(false)
+  const [pending, setPending] = useState<string | null>(null)
+  const shown = pending ?? value
+  const empty = shown.trim() === ''
+
+  const flush = (v: string | null) => {
+    if (v === null) return
+    setPending(null)
+    onChange(v)
+  }
+  const onCompositionStart = () => {
+    composingRef.current = true
+    setPending(value)
+  }
+  const onCompositionEnd = (e: ReactCompositionEvent<HTMLTextAreaElement>) => {
+    composingRef.current = false
+    // Chrome fires the final input/onChange BEFORE compositionend; e.target
+    // carries the committed text either way.
+    flush(e.currentTarget.value)
+    // The flush echoes to the shared draft, whose Lexical commit steals focus
+    // again — the Enter/space that confirmed the candidate would otherwise end
+    // in a blur and fold the bar. Restore focus/caret right after the echo.
+    refocusAfterEcho(e.currentTarget)
+  }
 
   // Enter sends (queue delivery, the official default busy-Enter behavior);
   // Shift+Enter newlines. Never send mid-IME composition — the keydown is the
@@ -287,6 +319,8 @@ function InputBar(props: {
   // bottomForm). After each echo, restore the caret here if the editor stole
   // it: blur→focus fire inside this one handler, so the dock's focused flag
   // never observes the theft and the bar stays up while the user types.
+  // (Mid-IM-composition there is no echo at all — see the composition shield —
+  // so focus is never stolen while the candidate window is open.)
   const refocusAfterEcho = (el: HTMLTextAreaElement) => {
     if (document.activeElement === el) return
     el.focus()
@@ -298,7 +332,23 @@ function InputBar(props: {
   // and the textarea must size to it without a keystroke.
   useEffect(() => {
     if (textareaRef.current) autoGrow(textareaRef.current)
-  }, [value, textareaRef])
+  }, [shown, textareaRef])
+
+  const handleInput = (e: ReactChangeEvent<HTMLTextAreaElement>) => {
+    const el = e.target
+    if (composingRef.current) {
+      // Composing: shadow the value locally only — the store echo would kill
+      // the composition (see the shield note above).
+      setPending(el.value)
+    } else {
+      // Plain typing: echo through; the override must clear so later external
+      // draft changes (seed, send-clear) are not shadowed by stale text.
+      setPending(null)
+      onChange(el.value)
+    }
+    autoGrow(el)
+    refocusAfterEcho(el)
+  }
 
   return (
     // Official InputBar card language: input-major surface, 22px radius,
@@ -314,12 +364,24 @@ function InputBar(props: {
           ref={textareaRef}
           className="fm-bar-text"
           rows={1}
-          value={value}
+          value={shown}
           placeholder={t('composer.placeholder')}
-          onChange={(e) => { onChange(e.target.value); autoGrow(e.target); refocusAfterEcho(e.target) }}
+          onChange={handleInput}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           onKeyDown={onKeyDown}
           onFocus={() => onFocusChange(true)}
-          onBlur={() => onFocusChange(false)}
+          onBlur={() => {
+            if (composingRef.current) {
+              // Focus stolen mid-composition (echo timing raced the IME): the
+              // pending text must not be lost — flush it and take the focus
+              // back, or the theft would both eat the draft and fold the bar.
+              composingRef.current = false
+              flush(shown)
+              if (textareaRef.current) refocusAfterEcho(textareaRef.current)
+            }
+            onFocusChange(false)
+          }}
         />
         {queueCount > 0 ? <span className="fm-bar-queue">{t('composer.queued', { n: queueCount })}</span> : null}
         <button
