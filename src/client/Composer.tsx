@@ -99,8 +99,13 @@ function AnswerCard(props: {
   onClose: () => void
 }) {
   const { t, width, wait, onClose } = props
-  const isQuestion = wait.kind === 'question'
-  const questions: any[] = isQuestion ? (wait.payload && wait.payload.questions ? wait.payload.questions : []) : []
+  // dsh 0.1.2 pending-interaction carriers: PendingQuestion (`kind` is
+  // 'question' or 'plan-review', questions on `wait.questions`, answers via
+  // `wait.answer({ answers })`) and PendingApproval (`kind: 'approval'`,
+  // toolName/reason on the carrier, decisions via `wait.answer(outcome)`).
+  const isApproval = wait.kind === 'approval'
+  const isQuestion = !isApproval
+  const questions: any[] = isQuestion && Array.isArray(wait.questions) ? wait.questions : []
   const [drafts, setDrafts] = useState<Record<string, AnswerDraft>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -122,30 +127,36 @@ function AnswerCard(props: {
     return { ...prev, [qid]: { selected: [label], custom: '' } }
   })
 
-  // One carrier, one receipt: respond() wraps the answer into a client-response
-  // envelope (rpcId backfilled by the runtime). Success needs no local state —
-  // the resolved frame empties `pending`, the form flips, and this card
-  // unmounts. A rejected receipt or transport failure stays on the card.
-  const respond = async (result: any) => {
+  // One carrier, one receipt: `wait.answer()` resolves the Host waterfall
+  // directly (dsh 0.1.2 replaced the old respond() envelope; the legacy
+  // adapter shims respond() behind the same answer face and rejects with a
+  // `rejected` marker when the old receipt says the answer was refused).
+  // Success needs no local state — the interaction leaves the pending map,
+  // the form flips, and this card unmounts. A rejection or transport failure
+  // stays on the card with `busy` released.
+  const respond = async (p: Promise<any>) => {
     setBusy(true)
     setError(null)
     try {
-      const receipt = await wait.respond(result)
+      const receipt = await p
       if (receipt && receipt.accepted === false) {
         setError(t('answer.rejected') + (receipt.reason ? `: ${receipt.reason}` : ''))
         setBusy(false)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const rej = err as any
+      setError(rej && rej.rejected
+        ? t('answer.rejected') + (rej.reason ? `: ${rej.reason}` : '')
+        : (err instanceof Error ? err.message : String(err)))
       setBusy(false)
     }
   }
   const submitAnswers = () => {
     if (!allAnswered(questions, drafts)) { setError(t('answer.incomplete')); return }
-    respond({ ok: true, value: { sessionId: wait.sessionId, answer: encodeAnswer(questions, drafts) } })
+    respond(wait.answer(encodeAnswer(questions, drafts)))
   }
   const decide = (outcome: 'allowed-once' | 'rejected') =>
-    respond({ ok: true, value: { sessionId: wait.sessionId, approvalId: wait.payload.approvalId, outcome } })
+    respond(wait.answer(outcome))
 
   return (
     // Official card language: a question takes the QuestionComposer shape
@@ -209,9 +220,9 @@ function AnswerCard(props: {
           )
         }) : (
           <div className="fm-card-q">
-            {wait.payload && wait.payload.reason ? <div className="fm-card-q-text">{wait.payload.reason}</div> : null}
-            {wait.payload && wait.payload.toolName ? (
-              <div className="fm-card-detail">{wait.payload.toolName}</div>
+            {wait.reason ? <div className="fm-card-q-text">{wait.reason}</div> : null}
+            {wait.toolName ? (
+              <div className="fm-card-detail">{wait.toolName}</div>
             ) : null}
           </div>
         )}

@@ -4,6 +4,7 @@ import {
   hasAssistantContent,
   addMetric,
   summarySegments,
+  processLabel,
   buildItems,
   findSeqIndex,
   resolveAnchorSeq,
@@ -12,8 +13,12 @@ import {
   lastPromptSeq,
   detectSettledCompletion,
   hasPendingInteraction,
+  legacySliceOf,
+  pendingInteractionOf,
+  legacyPendingOf,
   onboardingSeen,
   hotkeyShouldEnter,
+  decideOpenScroll,
 } from '../src/client/model'
 
 // Minimal translate stub: renders the key plus the interpolated `n` so tests
@@ -70,27 +75,60 @@ describe('summarySegments', () => {
 })
 
 describe('buildItems', () => {
-  it('folds tool-result/context/command into a summary line', () => {
-    const nodes = [
-      { kind: 'user', seq: 1, content: [{ type: 'text', text: 'hi' }] },
-      { kind: 'tool-result', seq: 2, call: { name: 'bash' } },
-      { kind: 'context', seq: 3, content: [] },
-      { kind: 'command', seq: 4, name: 'x' },
-      { kind: 'assistant', seq: 5, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'done' }] },
-    ]
-    const items = buildItems(nodes, [], t)
-    expect(items.map((i) => i.kind)).toEqual(['user', 'hidden', 'assistant'])
-    const hidden = items[1] as { kind: 'hidden'; text: string }
-    expect(hidden.text).toContain('sum.commands:2')
-    expect(hidden.text).toContain('sum.context:1')
+  const nodes = [
+    { kind: 'user', seq: 1, content: [{ type: 'text', text: 'hi' }] },
+    { kind: 'tool-result', seq: 2, call: { name: 'bash' } },
+    { kind: 'assistant', seq: 3, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'intermediate note' }] },
+    { kind: 'tool-result', seq: 4, call: { name: 'read' } },
+    { kind: 'assistant', seq: 5, turn: 1, step: 2, blocks: [{ kind: 'text', text: 'final answer' }] },
+    { kind: 'user', seq: 6, content: [{ type: 'text', text: 'next' }] },
+    { kind: 'assistant', seq: 7, turn: 2, step: 1, blocks: [{ kind: 'text', text: 'second answer' }] },
+  ]
+
+  it('normal mode keeps the classic per-segment metric folding', () => {
+    const items = buildItems(nodes, [], t, 'normal')
+    expect(items.map((i) => i.kind)).toEqual(['user', 'hidden', 'assistant', 'hidden', 'assistant', 'user', 'assistant'])
+    expect((items[1] as { text: string }).text).toContain('sum.commands:1')
+  })
+
+  it('compact mode folds each turn into work part + conclusion', () => {
+    const items = buildItems(nodes, [], t, 'compact')
+    expect(items.map((i) => i.kind)).toEqual(['user', 'turnProcess', 'assistant', 'user', 'assistant'])
+    const seg = items[1] as { kind: 'turnProcess'; collapsed: boolean; workItems: any[] }
+    expect(seg.collapsed).toBe(true)
+    // work part: tool calls folded (hidden) + intermediate assistant text,
+    // but NOT the closing answer
+    expect(seg.workItems.map((w) => w.kind)).toEqual(['hidden', 'assistant', 'hidden'])
+    expect((seg.workItems[1] as { text?: string; blocks?: any[] }).blocks?.[0].text).toBe('intermediate note')
+    // conclusion: the last content assistant of the turn
+    expect((items[2] as { blocks: any[] }).blocks[0].text).toBe('final answer')
+  })
+
+  it('compact counts reflect the work part', () => {
+    const items = buildItems(nodes, [], t, 'compact')
+    const seg = items[1] as { counts: { tools: number; messages: number } }
+    expect(seg.counts.tools).toBe(2)
+    expect(seg.counts.messages).toBe(1)
+  })
+
+  it('leaves the streaming tail unfolded while unstable (normal form)', () => {
+    const open = nodes.slice(0, 5) // last turn, tail still streaming
+    const items = buildItems(open, [], t, 'compact', false)
+    expect(items.map((i) => i.kind)).toEqual(['user', 'hidden', 'assistant', 'hidden', 'assistant'])
+  })
+
+  it('folds the last turn once the snapshot is stable', () => {
+    const open = nodes.slice(0, 5) // same nodes, reply settled (partial drained)
+    const items = buildItems(open, [], t, 'compact', true)
+    expect(items.map((i) => i.kind)).toEqual(['user', 'turnProcess', 'assistant'])
   })
 
   it('skips empty user and non-content assistant nodes', () => {
-    const nodes = [
+    const ns = [
       { kind: 'user', seq: 1, content: [{ type: 'image' }] },
       { kind: 'assistant', seq: 2, turn: 1, step: 1, blocks: [{ kind: 'reasoning', text: 'think' }] },
     ]
-    expect(buildItems(nodes, [], t)).toEqual([])
+    expect(buildItems(ns, [], t)).toEqual([])
   })
 
   it('emits an error item for turn-error', () => {
@@ -101,7 +139,7 @@ describe('buildItems', () => {
   it('accounts for running tool calls', () => {
     const items = buildItems([], [{ name: 'bash' }, { name: 'bash' }], t)
     expect(items).toHaveLength(1)
-    expect((items[0] as { kind: 'hidden'; text: string }).text).toBe('sum.commands:2')
+    expect((items[0] as { text: string }).text).toBe('sum.commands:2')
   })
 })
 
@@ -109,7 +147,7 @@ describe('findSeqIndex', () => {
   const items = [
     { kind: 'user', text: 'a', seq: 10 },
     { kind: 'steering', text: 'b', seq: 20 },
-    { kind: 'hidden', text: 'x' },
+    { kind: 'process', collapsed: true, counts: { tools: 0, messages: 0, subagents: 0 }, rows: [] },
   ] as any
   it('finds user/steering by seq', () => {
     expect(findSeqIndex(items, 20)).toBe(1)
@@ -129,6 +167,113 @@ describe('resolveAnchorSeq', () => {
     expect(resolveAnchorSeq({ nodes: { get: () => undefined } }, 'k')).toBe(null)
     expect(resolveAnchorSeq({ nodes: { get: () => ({ data: {} }) } }, 'k')).toBe(null)
     expect(resolveAnchorSeq(null, null)).toBe(null)
+  })
+})
+
+describe('decideOpenScroll', () => {
+  const userItems = [
+    { kind: 'user', text: 'first', seq: 1 },
+    { kind: 'user', text: 'mid', seq: 106503 },
+    { kind: 'user', text: 'last', seq: 3 },
+  ] as any
+
+  it('scrolls an anchor entry to the seq resolved from its key (not to a different row)', () => {
+    // Reading position is the MIDDLE message. The bug used to read the
+    // key-less `seq` field off the anchor entry and fall back to the newest.
+    const d = decideOpenScroll({ kind: 'anchor', seq: 106503, items: userItems, hasMore: false, deadlinePassed: false })
+    expect(d).toEqual({ action: 'scroll', index: 1, seq: 106503 })
+  })
+
+  it('does NOT latch while the anchor row has not materialized in items (empty list on first pass)', () => {
+    // Overlay mount: chat-view state not delivered yet -> items empty, but the
+    // seq IS resolvable. The effect must keep waiting, never position "done".
+    const d = decideOpenScroll({ kind: 'anchor', seq: 106503, items: [], hasMore: false, deadlinePassed: false })
+    expect(d).toEqual({ action: 'wait' })
+  })
+
+  it('keeps waiting while history pages in (hasMore), even when the row exists', () => {
+    const d = decideOpenScroll({ kind: 'anchor', seq: 106503, items: userItems, hasMore: true, deadlinePassed: true })
+    expect(d).toEqual({ action: 'wait' })
+  })
+
+  it('falls back to the newest user message after the deadline when the anchor never materializes', () => {
+    // The anchor row is absent from the settled list (its message was blank /
+    // skipped by buildItems) and the deadline passed -> classic fallback.
+    const d = decideOpenScroll({ kind: 'anchor', seq: 999999, items: userItems, hasMore: false, deadlinePassed: true })
+    expect(d).toEqual({ action: 'scroll', index: 2, seq: null })
+  })
+
+  it('keeps waiting past the deadline while the row list itself never landed', () => {
+    const d = decideOpenScroll({ kind: 'anchor', seq: 999999, items: [], hasMore: false, deadlinePassed: true })
+    expect(d).toEqual({ action: 'bottom' })
+  })
+
+  it('falls back to the bottom after the deadline when no user row exists at all', () => {
+    const d = decideOpenScroll({ kind: 'anchor', seq: 106503, items: [{ kind: 'assistant', blocks: [] } as any], hasMore: false, deadlinePassed: true })
+    expect(d).toEqual({ action: 'bottom' })
+  })
+
+  it('scrolls an auto entry (auto-focus) to its question seq when the row materializes', () => {
+    const d = decideOpenScroll({ kind: 'auto', seq: 106503, items: userItems, hasMore: false, deadlinePassed: false })
+    expect(d).toEqual({ action: 'scroll', index: 1, seq: 106503 })
+  })
+
+  it('auto entry also waits (not latch) while its row is missing and the deadline has not passed', () => {
+    const d = decideOpenScroll({ kind: 'auto', seq: 106503, items: [], hasMore: false, deadlinePassed: false })
+    expect(d).toEqual({ action: 'wait' })
+  })
+
+  it('lastUser entry opens at the newest user prompt', () => {
+    const d = decideOpenScroll({ kind: 'lastUser', seq: null, items: userItems, hasMore: false, deadlinePassed: false })
+    expect(d).toEqual({ action: 'scroll', index: 2, seq: null })
+  })
+
+  it('lastUser entry waits (not latch) while the list is still empty pre-deadline', () => {
+    const d = decideOpenScroll({ kind: 'lastUser', seq: null, items: [], hasMore: false, deadlinePassed: false })
+    expect(d).toEqual({ action: 'wait' })
+  })
+
+  it('unresolvable anchor waits pre-deadline and falls back after it', () => {
+    expect(decideOpenScroll({ kind: 'anchor', seq: null, items: [], hasMore: false, deadlinePassed: false })).toEqual({ action: 'wait' })
+    expect(decideOpenScroll({ kind: 'anchor', seq: null, items: userItems, hasMore: false, deadlinePassed: true })).toEqual({ action: 'scroll', index: 2, seq: null })
+  })
+})
+
+describe('legacySliceOf (dsh 0.1.2 snapshot adapter)', () => {
+  it('reads the chat view legacy slice when present', () => {
+    const chatView = { legacy: { nodes: [{ kind: 'user', seq: 1 }], partial: { turn: 1 }, runningCalls: [] } }
+    const slice = legacySliceOf(chatView, {})
+    expect(slice.nodes).toHaveLength(1)
+    expect(slice.partial).toEqual({ turn: 1 })
+  })
+  it('falls back to flat snapshot fields on older dsh', () => {
+    const slice = legacySliceOf(null, { nodes: [{ kind: 'assistant' }], partial: null, runningCalls: [{ name: 'bash' }] })
+    expect(slice.nodes).toEqual([{ kind: 'assistant' }])
+    expect(slice.runningCalls).toEqual([{ name: 'bash' }])
+  })
+  it('defaults to empty slices', () => {
+    expect(legacySliceOf(null, null)).toEqual({ nodes: [], partial: null, runningCalls: [] })
+  })
+  it('feeds detectSettledCompletion with the adapted slice', () => {
+    const chatView = { legacy: { nodes: [{ kind: 'user', seq: 1 }, { kind: 'assistant', seq: 2, interrupted: false }], partial: null, runningCalls: [] } }
+    const slice = legacySliceOf(chatView, { running: false })
+    const outcome = detectSettledCompletion(slice)
+    expect(outcome.settled).toBe(true)
+    expect(outcome.completed).toBe(true)
+    expect(outcome.anchorSeq).toBe(1)
+  })
+})
+
+describe('pendingInteractionOf (dsh 0.1.2 pending map)', () => {
+  const interaction = { kind: 'question', key: 'k1' }
+  it('reads the current session interaction', () => {
+    const map = new Map([['s1', interaction]])
+    expect(pendingInteractionOf(map, 's1')).toBe(interaction)
+    expect(pendingInteractionOf(map, 's2')).toBe(null)
+  })
+  it('returns null defensively', () => {
+    expect(pendingInteractionOf(null, 's1')).toBe(null)
+    expect(pendingInteractionOf(undefined, undefined)).toBe(null)
   })
 })
 
@@ -186,7 +331,7 @@ describe('lastPromptSeq', () => {
   })
   it('returns null when no prompt row exists', () => {
     expect(lastPromptSeq([{ kind: 'assistant', blocks: [], seq: 1, turn: 1, step: 1 }] as any)).toBe(null)
-    expect(lastPromptSeq([{ kind: 'hidden', text: 'x' }] as any)).toBe(null)
+    expect(lastPromptSeq([{ kind: 'process', collapsed: true, counts: { tools: 0, messages: 0, subagents: 0 }, rows: [] }] as any)).toBe(null)
     expect(lastPromptSeq([])).toBe(null)
   })
 })
@@ -559,5 +704,80 @@ describe('answer encoding', () => {
     expect(parseRecommendedLabel('B')).toEqual({ label: 'B', recommended: false })
     // the marker alone is not a recommendation marker
     expect(parseRecommendedLabel(' (Recommended)')).toEqual({ label: ' (Recommended)', recommended: false })
+  })
+})
+
+describe('legacyPendingOf (pre-0.1.2 pending adapter)', () => {
+  const legacyQuestion = {
+    kind: 'question',
+    sessionId: 's1',
+    payload: { questions: [{ id: 'q1', question: 'Which?', options: [{ label: 'A' }] }] },
+    respond: (result: any) => Promise.resolve({ accepted: true, echo: result }),
+  }
+  const legacyApproval = {
+    kind: 'approval',
+    sessionId: 's1',
+    payload: { approvalId: 'ap1', toolName: 'bash', reason: 'run ls' },
+    respond: (result: any) => Promise.resolve({ accepted: true, echo: result }),
+  }
+
+  it('returns null when nothing is pending', () => {
+    expect(legacyPendingOf(null)).toBeNull()
+    expect(legacyPendingOf({})).toBeNull()
+    expect(legacyPendingOf({ pending: [] })).toBeNull()
+  })
+
+  it('reshapes a legacy question into the 0.1.2 carrier face', () => {
+    const wait = legacyPendingOf({ pending: [legacyQuestion] })
+    expect(wait.kind).toBe('question')
+    expect(wait.questions).toHaveLength(1)
+    expect(wait.questions[0].id).toBe('q1')
+  })
+
+  it('reshapes a legacy approval with reason/toolName/approvalId', () => {
+    const wait = legacyPendingOf({ pending: [legacyApproval] })
+    expect(wait.kind).toBe('approval')
+    expect(wait.approvalId).toBe('ap1')
+    expect(wait.toolName).toBe('bash')
+    expect(wait.reason).toBe('run ls')
+  })
+
+  it('shims answer() onto respond() with the legacy envelope (question)', async () => {
+    const wait = legacyPendingOf({ pending: [legacyQuestion] })
+    const receipt = await wait.answer({ q1: 'A' })
+    expect(receipt.accepted).toBe(true)
+    expect(receipt.echo).toEqual({ ok: true, value: { sessionId: 's1', answer: { q1: 'A' } } })
+  })
+
+  it('shims answer() onto respond() with the approval outcome envelope', async () => {
+    const wait = legacyPendingOf({ pending: [legacyApproval] })
+    const receipt = await wait.answer('allowed-once')
+    expect(receipt.echo).toEqual({ ok: true, value: { sessionId: 's1', approvalId: 'ap1', outcome: 'allowed-once' } })
+  })
+
+  it('rejects with a rejected-marker error when the legacy receipt refuses', async () => {
+    const refusing = {
+      kind: 'question', sessionId: 's1', payload: {},
+      respond: () => Promise.resolve({ accepted: false, reason: 'session gone' }),
+    }
+    const wait = legacyPendingOf({ pending: [refusing] })
+    await expect(wait.answer({})).rejects.toMatchObject({ rejected: true, reason: 'session gone' })
+  })
+
+  it('leaves a 0.1.2 carrier untouched (answer already a function)', () => {
+    const modern = { kind: 'question', questions: [], answer: () => Promise.resolve({}) }
+    const wait = legacyPendingOf({ pending: [modern] })
+    expect(wait.answer).toBe(modern.answer)
+  })
+})
+
+describe('legacy fallback edges', () => {
+  it('legacySliceOf yields null partial even when the legacy slice omits it', () => {
+    expect(legacySliceOf({ legacy: { nodes: [] } }, null).partial).toBeNull()
+  })
+
+  it('detectSettledCompletion accepts runningCalls so the legacy shape still judges', () => {
+    const outcome = detectSettledCompletion({ partial: null, nodes: [], runningCalls: [{ name: 'bash' }] })
+    expect(outcome).toHaveProperty('settled')
   })
 })

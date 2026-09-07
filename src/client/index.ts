@@ -2,22 +2,32 @@
  * Focus Mode, browser half: a full-screen reading overlay in `shell.overlay`
  * (additive, never replaces shipped UI), a "专注" button in the session header
  * action row, and a collapsible plugin card in the Plugins settings tab
- * (`settings.plugin.item`). Rendering reuses the official
- * `@deepseek-ai/dsh-client-ui-primitives` Markdown/MessageText/Tooltip/Button
- * components and the conversation service's image resolver.
+ * (`settings.plugin.item`). Rendering reuses the official client UI primitives
+ * module (`@deepseek-ai/dsh-client-ui-primitives` runtime id) — Markdown /
+ * MessageText / Tooltip / Button — plus the conversation service's composer
+ * registry and the uiSession pending-interaction service (dsh 0.1.2).
  */
 import { createElement } from 'react'
 import { FocusOverlay, FocusSettingsCard, FocusToggle, FocusOnboarding, focusStore } from './FocusView'
 import { FOCUS_CSS } from './styles'
 import { zh, en } from './locales'
 import { prefsStore } from './settings'
-import { detectSettledCompletion, hotkeyShouldEnter } from './model'
+import { detectSettledCompletion, hotkeyShouldEnter, legacySliceOf } from './model'
 
 const NS = 'focus'
 
+// One-time notice when the dsh 0.1.2+ services are absent so the degraded
+// legacy-compatibility mode is visible in the console instead of silent.
+let warnedLegacy = false
+function warnLegacyOnce() {
+  if (warnedLegacy) return
+  warnedLegacy = true
+  console.warn('[dsh-focus-overlay] dsh 0.1.2+ ui services not found — running in legacy compatibility mode')
+}
+
 export default {
   name: 'dsh-focus-overlay-client',
-  inject: ['slots', 'sessions', 'locale', 'workspaces'],
+  inject: ['slots', 'sessions', 'locale', 'workspaces', 'uiSession', 'uiConversation', 'settingsScope'],
   apply(ctx: any) {
     // Package-owned stylesheet (removed with the plugin on unload).
     const style = document.createElement('style')
@@ -53,6 +63,19 @@ export default {
     const workspaces = ctx.workspaces
     const conversation = ctx.get('conversation')
     const chatFileMentions = ctx.get('chatFileMentions')
+    // dsh 0.1.2: pending user interactions (question / plan review / approval)
+    // moved from the session snapshot into this root-level uiSession service,
+    // and conversation content into the uiConversation chat view assembly.
+    const uiSession = ctx.get('uiSession')
+    const uiConversation = ctx.get('uiConversation')
+    if (!uiSession || !uiConversation) warnLegacyOnce()
+    // Official "对话显示" preference (ui-chat.transcriptView): bind the same
+    // settings scope the chat target's TranscriptViewPolicy binds.
+    let settingsScope: any = null
+    try {
+      const binder = ctx.get('settingsScope')
+      settingsScope = binder && typeof binder.bind === 'function' ? binder.bind({ namespace: 'ui-chat' }) : null
+    } catch { settingsScope = null }
 
     // Auto-focus: watch the *current* session's running bit. When a reply
     // settles normally (running true → false + finalized, non-interrupted
@@ -61,17 +84,38 @@ export default {
     // Abnormal endings (stop / error / max-tokens / interrupt) never fire.
     //
     // The "AI is waiting for your reply" case (ask_user_question / approval) is
-    // NOT handled here: it is a live state (`snapshot.pending`), not an event,
-    // so the overlay renders it directly and it clears the moment the user
-    // answers — no edge detection needed.
+    // NOT handled here: it is a live state (the uiSession pending-interactions
+    // map on dsh 0.1.2+, the session snapshot's flat `pending` array on older
+    // builds), so the overlay renders it directly and it clears the moment the
+    // user answers — no edge detection needed.
     ctx.effect(() => {
       let currentId: any = undefined
       let unsubSession: (() => void) | null = null
+      let unsubChat: (() => void) | null = null
+      let chatSlice: any = null
       let prevRunning = false
       let pendingSettle = false
 
+      const judge = () => {
+        if (!pendingSettle) return
+        const snap = chatSlice
+        const outcome = detectSettledCompletion({ partial: snap ? snap.partial : null, nodes: snap ? snap.nodes : [], runningCalls: snap && snap.runningCalls ? snap.runningCalls : [] })
+        if (outcome.settled) {
+          pendingSettle = false
+          if (outcome.completed && prefsStore.get().autoFocus) {
+            if (focusStore.get()) focusStore.notifyDone()
+            else { focusStore.setAutoAnchor(outcome.anchorSeq); focusStore.set(true) }
+          }
+        }
+        // Not settled yet: keep `pendingSettle` armed. The `turn/end` frame
+        // that lands the final node also triggers these subscriptions, so the
+        // next snapshot re-evaluates against the complete node list.
+      }
+
       const watch = (id: any) => {
         if (unsubSession) { unsubSession(); unsubSession = null }
+        if (unsubChat) { unsubChat(); unsubChat = null }
+        chatSlice = null
         prevRunning = false
         pendingSettle = false
         if (id == null) return
@@ -87,23 +131,24 @@ export default {
           // not landed yet), so we wait for a stable snapshot instead.
           if (prevRunning && !running) pendingSettle = true
           if (running) pendingSettle = false
-          if (pendingSettle && !running) {
-            const outcome = detectSettledCompletion(snap)
-            if (outcome.settled) {
-              pendingSettle = false
-              if (outcome.completed && prefsStore.get().autoFocus) {
-                if (focusStore.get()) focusStore.notifyDone()
-                else { focusStore.setAutoAnchor(outcome.anchorSeq); focusStore.set(true) }
-              }
-            }
-            // Not settled yet: keep `pendingSettle` armed. The `turn/end` frame
-            // that lands the final node also triggers this subscription, so the
-            // next snapshot re-evaluates against the complete node list.
-          }
+          judge()
           prevRunning = running
         }
         onSnap()
         unsubSession = face.subscribe(onSnap)
+        // dsh 0.1.2: the content slice lives in the uiConversation chat view;
+        // subscribing also activates the target so the slice materializes even
+        // if the official conversation view never mounted it for us.
+        if (uiConversation) {
+          try {
+            const convBinding = uiConversation.binding(id)
+            const chatSource = convBinding.target('chat')
+            const onChat = () => { chatSlice = legacySliceOf(chatSource.getSnapshot(), face.getSnapshot()); judge() }
+            onChat()
+            unsubChat = chatSource.subscribe(onChat)
+          } catch { /* older dsh: face snapshot carries the slice itself */ }
+        }
+        if (!unsubChat) chatSlice = legacySliceOf(null, face.getSnapshot())
       }
 
       const onList = () => {
@@ -114,7 +159,7 @@ export default {
       onList()
       const unsubList = sessions.list.subscribe(onList)
 
-      return () => { if (unsubList) unsubList(); if (unsubSession) unsubSession() }
+      return () => { if (unsubList) unsubList(); if (unsubSession) unsubSession(); if (unsubChat) unsubChat() }
     })
 
     // F hotkey: enter focus mode from anywhere. The guard rails (pref on, no
@@ -142,7 +187,7 @@ export default {
 
     ctx.slots.inject('shell.overlay', () => ctx.slots.register(
       { name: 'shell.overlay', id: 'focus-mode-overlay', order: 1000 },
-      (props: any) => createElement(FocusOverlay, { ...props, sessions, workspaces, conversation, chatFileMentions, t }),
+      (props: any) => createElement(FocusOverlay, { ...props, sessions, workspaces, conversation, chatFileMentions, uiSession, uiConversation, settingsScope, t }),
     ))
 
     ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(

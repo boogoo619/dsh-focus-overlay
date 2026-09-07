@@ -1,5 +1,78 @@
 import type { FocusTranslate } from './locales'
 
+// ---- dsh 0.1.2 snapshot adapters ----
+
+/** The conversation content slice the overlay renders from. dsh 0.1.2 moved
+ *  the flat `nodes` / `partial` / `runningCalls` fields off the session
+ *  snapshot into the chat view snapshot's `legacy` compatibility projection
+ *  (`uiConversation.binding(id).target('chat')`); pre-0.1.2 builds still carry
+ *  them on the session snapshot top level, so both shapes resolve here. */
+export interface LegacySlice {
+  nodes: any[]
+  partial: any
+  runningCalls: any[]
+}
+
+export function legacySliceOf(chatView: any, snap: any): LegacySlice {
+  const legacy = chatView && chatView.legacy ? chatView.legacy : null
+  return {
+    nodes: (legacy && legacy.nodes) || (snap && snap.nodes) || [],
+    partial: legacy ? (legacy.partial ?? null) : (snap && snap.partial) || null,
+    runningCalls: (legacy && legacy.runningCalls) || (snap && snap.runningCalls) || [],
+  }
+}
+
+/** The current session's pending user interaction (question / plan review /
+ *  approval) from the uiSession pending map — dsh 0.1.2 replaced the session
+ *  snapshot's flat `pending` array with this service-owned map. Null when the
+ *  map (or the interaction for this session) is absent. */
+export function pendingInteractionOf(map: any, sessionId: any): any {
+  try {
+    if (map && typeof map.get === 'function') return map.get(sessionId) || null
+  } catch { /* defensive */ }
+  return null
+}
+
+/** Legacy pending interaction — pre-0.1.2 dsh carried a flat `pending` array
+ *  on the session snapshot, with a different carrier shape (`payload`
+ *  envelope, answers via `wait.respond({ok, value})` returning a `receipt`).
+ *  This adapter reshapes the first legacy item into the 0.1.2 carrier face the
+ *  overlay's answer card renders (kind / questions / reason / toolName) and
+ *  shims `wait.answer(...)` onto `wait.respond(...)`, throwing a rejected-
+ *  marker error when the legacy receipt says the answer was refused. Null
+ *  when nothing is pending or no legacy carrier exists. */
+export function legacyPendingOf(snap: any): any {
+  const pending = snap && Array.isArray(snap.pending) ? snap.pending : []
+  const old = pending[0]
+  if (!old) return null
+  const payload = old.payload || {}
+  const kind = old.kind === 'question' ? 'question' : 'approval'
+  const shaped: any = {
+    ...old,
+    kind,
+    questions: Array.isArray(payload.questions) ? payload.questions : [],
+    toolName: payload.toolName,
+    reason: payload.reason ?? payload.detail,
+    approvalId: payload.approvalId,
+  }
+  if (typeof old.respond === 'function' && typeof old.answer !== 'function') {
+    shaped.answer = (answerPayload: any) =>
+      Promise.resolve(old.respond(kind === 'approval'
+        ? { ok: true, value: { sessionId: old.sessionId, approvalId: payload.approvalId, outcome: answerPayload } }
+        : { ok: true, value: { sessionId: old.sessionId, answer: answerPayload } }
+      )).then((receipt: any) => {
+        if (receipt && receipt.accepted === false) {
+          const err: any = new Error(receipt.reason || 'rejected')
+          err.rejected = true
+          err.reason = receipt.reason
+          throw err
+        }
+        return receipt
+      })
+  }
+  return shaped
+}
+
 // ---- text helpers ----
 export function flattenText(content: any): string {
   if (!content || !content.length) return ''
@@ -52,8 +125,17 @@ export type FocusItem =
   | { kind: 'user'; text: string; seq: number }
   | { kind: 'steering'; text: string; seq: number }
   | { kind: 'assistant'; blocks: any[]; seq: number; turn: number; step: number }
-  | { kind: 'hidden'; text: string }
   | { kind: 'error'; text: string }
+  | { kind: 'hidden'; text: string }
+  | { kind: 'turnProcess'; turn: number; seq: number; collapsed: boolean; counts: ProcessCounts; workItems: FocusItem[] }
+
+/** Official TurnProcess-style counts for one folded process segment. */
+export interface ProcessCounts {
+  tools: number
+  messages: number
+  subagents: number
+}
+
 
 export function hasAssistantContent(blocks: any[]): boolean {
   for (const b of blocks || []) {
@@ -62,7 +144,120 @@ export function hasAssistantContent(blocks: any[]): boolean {
   return false
 }
 
-export function buildItems(nodes: any[], runningCalls: any[], t: FocusTranslate): FocusItem[] {
+/** Assemble the official TurnProcess disclosure label: "N 次工具调用 · M 条消息
+ *  · K 个 subagent", falling back to "已思考" when the segment has nothing
+ *  countable — mirroring the official `message.turnProcess.*` assembly. */
+export function processLabel(counts: ProcessCounts, t: FocusTranslate): string {
+  const labels: string[] = []
+  if (counts.tools > 0) labels.push(t('process.toolCalls', { n: counts.tools }))
+  if (counts.messages > 0) labels.push(t('process.messages', { n: counts.messages }))
+  if (counts.subagents > 0) labels.push(t('process.subagents', { n: counts.subagents }))
+  return labels.length === 0 ? t('process.thought') : labels.join(t('process.separator'))
+}
+
+export function buildItems(nodes: any[], runningCalls: any[], t: FocusTranslate, transcriptView: 'normal' | 'compact' = 'compact', stable: boolean = true): FocusItem[] {
+  if (transcriptView === 'normal') return segmentItems(nodes, runningCalls, t)
+
+  // compact: split each prompt-turn into work part + conclusion. The closing
+  // assistant is the LAST content-bearing assistant of the turn; everything
+  // else (tools, thinking, intermediate assistant output, context) is the
+  // work part, folded into one official-style counts row. A turn that has no
+  // closing assistant yet (still streaming) stays unfolded, in normal form.
+  const buckets: any[][] = []
+  for (const n of nodes) {
+    if (!n) continue
+    if (n.kind === 'user') buckets.push([n])
+    else if (buckets.length === 0) buckets.push([n])
+    else buckets[buckets.length - 1].push(n)
+  }
+  if (buckets.length === 0) return segmentItems(nodes, runningCalls, t)
+  const items: FocusItem[] = []
+  let turn = 0
+  for (let b = 0; b < buckets.length; b++) {
+    const bucket = buckets[b]
+    const isLast = b === buckets.length - 1
+    const head = bucket[0]
+    // Prologue (before the first prompt): always normal-form segments.
+    if (head.kind !== 'user') {
+      items.push(...segmentItems(bucket, isLast ? runningCalls : [], t))
+      continue
+    }
+    const headText = flattenText(head.content)
+    if (headText.trim() !== '') items.push({ kind: 'user', text: headText, seq: head.seq })
+    const body = bucket.slice(1)
+    // Find the closing assistant: last content-bearing assistant of the turn.
+    let closingIdx = -1
+    for (let k = body.length - 1; k >= 0; k--) {
+      const n = body[k]
+      if (n && n.kind === 'assistant' && hasAssistantContent(n.blocks)) { closingIdx = k; break }
+    }
+    // The turn is foldable once its closing answer is the last node AND the
+    // snapshot is stable (partial drained). For the LAST bucket that stability
+    // check is what distinguishes a finished turn from one still streaming —
+    // a streaming tail keeps the normal form until it settles.
+    const closed = closingIdx >= 0 && closingIdx === body.length - 1 && (stable || !isLast)
+    if (!closed) {
+      // Unfinished or trailing evidence after the answer: normal form, with
+      // the live running calls folded into the tail segment.
+      items.push(...segmentItems(body, isLast ? runningCalls : [], t))
+      continue
+    }
+    const closing = body[closingIdx]
+    // Walk the work range; steering messages are the user's own words, so
+    // they surface as top-level steering rows (never buried in a folded work
+    // part). Each run of process nodes between them becomes its own segment.
+    let workNodes: any[] = []
+    const flushWork = () => {
+      if (workNodes.length > 0) {
+        items.push({
+          kind: 'turnProcess',
+          turn: ++turn,
+          // Stable identity (the turn's prompt seq): survives history
+          // prepends, unlike an index key which shifts as older turns land.
+          seq: head.seq,
+          collapsed: true,
+          counts: countProcess(workNodes),
+          workItems: segmentItems(workNodes, [], t),
+        })
+        workNodes = []
+      }
+    }
+    for (let k = 0; k < closingIdx; k++) {
+      const n = body[k]
+      if (n.kind === 'steering') {
+        flushWork()
+        if (flattenText(n.content).trim() !== '') items.push({ kind: 'steering', text: flattenText(n.content), seq: n.seq })
+        continue
+      }
+      workNodes.push(n)
+    }
+    flushWork()
+    items.push({ kind: 'assistant', blocks: closing.blocks, seq: closing.seq, turn: closing.turn, step: closing.step })
+  }
+  return items
+}
+
+/** Per-turn process counts for the official disclosure label. */
+export function countProcess(workNodes: any[]): ProcessCounts {
+  const metrics: Record<string, number> = {}
+  let assistantMessages = 0
+  for (const n of workNodes) {
+    if (!n) continue
+    if (n.kind === 'assistant') { if (hasAssistantContent(n.blocks)) assistantMessages++; continue }
+    if (n.kind === 'context' || n.kind === 'compaction') { metrics.context = (metrics.context || 0) + 1; continue }
+    addMetric(metrics, (n.call && n.call.name) ? n.call.name : (n.name || ''))
+  }
+  return {
+    tools: (metrics.commands || 0) + (metrics.edits || 0) + (metrics.searches || 0) + (metrics.files || 0) + (metrics.dirs || 0) + (metrics.todos || 0) + (metrics.goals || 0) + (metrics.workflows || 0) + (metrics.skills || 0) + (metrics.questions || 0) + (metrics.plans || 0) + (metrics.jobs || 0) + (metrics.others || 0),
+    messages: (metrics.context || 0) + assistantMessages,
+    subagents: metrics.subagents || 0,
+  }
+}
+
+/** The classic (pre-0.1.2) segmentation: content rows with tool/context runs
+ *  folded into metric summary lines. This IS the normal-mode presentation,
+ *  and the expanded work-part presentation in compact mode. */
+function segmentItems(nodes: any[], runningCalls: any[], t: FocusTranslate): FocusItem[] {
   const items: FocusItem[] = []
   let metrics: Record<string, number> = {}
   const flush = () => {
@@ -113,10 +308,13 @@ export function buildItems(nodes: any[], runningCalls: any[], t: FocusTranslate)
 }
 
 export function resolveAnchorSeq(chat: any, key: string | null): number | null {
-  if (!key || !chat || !chat.nodes) return null
+  if (!key || !chat) return null
   try {
-    const node = chat.nodes.get(key)
+    // dsh 0.1.2 ChatNodeStore: `.get(key)` returns the view node directly,
+    // carrying its `anchorSeq`.
+    const node = typeof chat.get === 'function' ? chat.get(key) : chat.nodes ? chat.nodes.get(key) : null
     if (!node) return null
+    if (typeof node.anchorSeq === 'number') return node.anchorSeq
     const d = node.data || node.node || node
     return (d && typeof d.seq === 'number') ? d.seq : null
   } catch { return null }
@@ -128,6 +326,78 @@ export function findSeqIndex(items: FocusItem[], seq: number): number {
     if ((it.kind === 'user' || it.kind === 'steering') && it.seq === seq) return i
   }
   return -1
+}
+
+/** Which intent opened the overlay — what its opening scroll should target. */
+export type OpenIntentKind = 'auto' | 'anchor' | 'lastUser'
+
+/** What the overlay's opening-position pass should do this render. */
+export type OpenScrollAction =
+  | { action: 'wait' }
+  | { action: 'scroll'; index: number; seq: number | null }
+  | { action: 'bottom' }
+
+/**
+ * Decide the overlay's opening scroll from the entry intent, the item list
+ * assembled so far, and the entry deadline. Pure so the decision is
+ * unit-testable at the seam the effect actually drives:
+ *
+ * - `auto` — a just-finished turn (auto-focus): open at the question that
+ *   started it (`seq` known from the turn edge, no key resolution needed).
+ * - `anchor` — a reading-position preserve: `seq` is resolved from the captured
+ *   chat anchor key by the caller (null while the node store is not resolvable
+ *   yet). The overlay scrolls to the ROW WITH THAT SEQ — never to a different
+ *   row (a regression here used to read the key-less `seq` field off anchor
+ *   entries and silently fall back to the newest message).
+ * - `lastUser` — position sync off / no anchor captured: open at the newest
+ *   user prompt.
+ *
+ * Waiting rules (the 0.1.2 chat view materializes lazily AND pages history
+ * asynchronously, so neither `items` nor the resolved seq may exist at mount):
+ * - While the history loader is still paging (`hasMore`) we wait — pages
+ *   PREPEND above any anchor, so scrolling mid-load would drift.
+ * - While the row list itself has not landed yet (`items` empty on the mount
+ *   render, before the chat-view state delivers) we wait until the entry
+ *   deadline instead of latching — latching on an empty list is what stranded
+ *   the overlay at the first message on every entry.
+ * - Once rows HAVE landed but the target row is absent (blank prompt skipped
+ *   by {@link buildItems}, steering-only session, …) the row list is final, so
+ *   we fall back immediately to the classic behaviors — no pointless wait.
+ * - A pass never reports "done" without actually scrolling somewhere.
+ *
+ * A successful target scroll carries the resolved `seq` back (the caller arms
+ * its anti-drift corrector with it); fallback scrolls carry null.
+ */
+export function decideOpenScroll(o: {
+  kind: OpenIntentKind
+  /** Target seq for auto/anchor entries; null while not resolvable. */
+  seq: number | null
+  items: FocusItem[]
+  hasMore: boolean
+  deadlinePassed: boolean
+}): OpenScrollAction {
+  if (o.hasMore) return { action: 'wait' }
+  if (o.kind === 'lastUser') {
+    const lastIdx = lastUserIndex(o.items)
+    if (lastIdx >= 0) return { action: 'scroll', index: lastIdx, seq: null }
+    // Row list still empty: the chat view has not delivered yet — keep
+    // waiting (do NOT latch on an empty list).
+    if (o.items.length === 0 && !o.deadlinePassed) return { action: 'wait' }
+    return { action: 'bottom' }
+  }
+  if (o.seq != null) {
+    const idx = findSeqIndex(o.items, o.seq)
+    if (idx >= 0) return { action: 'scroll', index: idx, seq: o.seq }
+    // Row list not landed yet: wait for the chat-view delivery, bounded by
+    // the deadline; once rows exist but the target is missing, fall back.
+    if (o.items.length === 0 && !o.deadlinePassed) return { action: 'wait' }
+    const lastIdx = lastUserIndex(o.items)
+    return lastIdx >= 0 ? { action: 'scroll', index: lastIdx, seq: null } : { action: 'bottom' }
+  }
+  // Anchor key not resolvable yet: the chat view may still be assembling.
+  if (!o.deadlinePassed) return { action: 'wait' }
+  const lastIdx = lastUserIndex(o.items)
+  return lastIdx >= 0 ? { action: 'scroll', index: lastIdx, seq: null } : { action: 'bottom' }
 }
 
 /** Seq of the message that started the latest turn: the last `user` node, or a

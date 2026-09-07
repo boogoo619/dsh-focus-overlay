@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, Component, type ReactNode } from 'react'
 import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore, onboardingStore } from './settings'
 import type { FocusTranslate } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
+import { TurnRail, type RailItem } from './TurnRail'
+import { WidthHandles, CONTENT_MIN, CONTENT_EDGE_BUDGET } from './WidthHandle'
 
 // ---- shared focus state (module scope; the overlay and the header toggle read it) ----
 let focusOn = false
@@ -11,7 +13,9 @@ let pendingAnchorKey: string | null = null
 let pendingAutoSeq: number | null = null
 let donePing = 0
 const focusListeners: Array<() => void> = []
-const notify = () => { for (const l of focusListeners) l() }
+// One listener throwing must not leave `focusOn` and the rendered state
+// disagreeing (that would brick the toggle: set(true) dead, overlay gone).
+const notify = () => { for (const l of focusListeners) { try { l() } catch (err) { console.error('[dsh-focus-overlay] focus listener failed', err) } } }
 export const focusStore = {
   get: () => focusOn,
   set: (v: boolean) => { focusOn = !!v; notify() },
@@ -76,6 +80,67 @@ function useSessionSnapshot(sessions: any, sessionId: any): any {
   return snap
 }
 
+/** The session's pending user interaction (question / plan review / approval),
+ *  read from the uiSession pending-interactions map — dsh 0.1.2 moved the old
+ *  snapshot `pending` array into this root-level observable. When the service
+ *  is absent (older dsh), falls back to the session snapshot's flat `pending`
+ *  array through the `legacyPendingOf` adapter. Returns null when this session
+ *  has nothing pending. */
+function usePendingInteraction(uiSession: any, sessionId: any, snap: any): any {
+  const source = uiSession && uiSession.pendingInteractions
+  const read = () => { try { return source ? source.getSnapshot() : null } catch { return null } }
+  const [map, setMap] = useState<any>(read)
+  useEffect(() => {
+    if (!source) { setMap(null); return }
+    setMap(source.getSnapshot())
+    try { return source.subscribe(() => setMap(source.getSnapshot())) } catch { return }
+  }, [source])
+  const modern = pendingInteractionOf(map, sessionId)
+  return modern || legacyPendingOf(snap)
+}
+
+/** The session's Chat view snapshot (dsh 0.1.2 `ChatSnapshot`) from the
+ *  uiConversation assembly — the first subscriber activates the chat target,
+ *  so this hook must stay subscribed for the view to materialize its legacy
+ *  slice. Null when the service is absent (older dsh). */
+function useChatView(uiConversation: any, sessionId: any): any {
+  const [chat, setChat] = useState<any>(null)
+  useEffect(() => {
+    if (!uiConversation || sessionId == null) { setChat(null); return }
+    let unsub: (() => void) | null = null
+    try {
+      const binding = uiConversation.binding(sessionId)
+      const source = binding.target('chat')
+      setChat(source.getSnapshot() || null)
+      unsub = source.subscribe(() => setChat(source.getSnapshot() || null))
+    } catch { setChat(null) }
+    return () => { if (unsub) unsub() }
+  }, [uiConversation, sessionId])
+  return chat
+}
+
+/** The official "对话显示" preference (`ui-chat.transcriptView`, values
+ *  normal | compact), read reactively from the settings scope the official
+ *  TranscriptViewPolicy binds. Defaults to compact — the official default —
+ *  when the scope or the section has not arrived yet. */
+function useTranscriptViewMode(settingsScope: any): 'normal' | 'compact' {
+  const source = settingsScope
+  const read = (): 'normal' | 'compact' => {
+    try {
+      const section = source ? source.getSnapshot().value : null
+      const mode = section ? section.transcriptView : null
+      return mode === 'normal' ? 'normal' : 'compact'
+    } catch { return 'compact' }
+  }
+  const [mode, setMode] = useState<'normal' | 'compact'>(read)
+  useEffect(() => {
+    if (!source) { setMode('compact'); return }
+    setMode(read())
+    try { return source.subscribe(() => setMode(read())) } catch { return }
+  }, [source])
+  return mode
+}
+
 function SessionImage({ attachment, loadImage }: { attachment: any; loadImage: (a: any) => Promise<string> }) {
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
@@ -87,34 +152,141 @@ function SessionImage({ attachment, loadImage }: { attachment: any; loadImage: (
   return <img className="fm-image" src={src} alt="" />
 }
 
-function AssistantItem({ blocks, loadImage, fileMentions }: { blocks: any[]; loadImage: (a: any) => Promise<string>; fileMentions: any }) {
+/** Labels the official MarkdownText requires for its code-block copy buttons
+ *  and footnotes section — mirrors the official `markdownLabels(t)` shape.
+ *  Without it the renderer throws `Cannot read properties of undefined
+ *  (reading 'code')` on the first fenced code block. */
+export function markdownLabels(t: FocusTranslate): any {
+  return {
+    code: { copyLabel: t('markdown.code.copy'), copiedLabel: t('markdown.code.copied') },
+    footnotes: t('markdown.footnotes'),
+  }
+}
+
+function AssistantItem(props: { blocks: any[]; loadImage: (a: any) => Promise<string>; fileMentions: any; labels: any }) {
+  const { blocks, loadImage, fileMentions, labels } = props
   const text = (blocks || []).filter((b) => b && b.kind === 'text').map((b) => b.text).join('')
   const images = (blocks || []).filter((b) => b && b.kind === 'image')
   return (
     <div className="fm-msg fm-assistant">
-      {text ? <MarkdownText text={text} fileMentions={fileMentions} /> : null}
+      {text ? <MarkdownText text={text} labels={labels} fileMentions={fileMentions} /> : null}
       {images.map((b, i) => <SessionImage key={i} attachment={b.attachment} loadImage={loadImage} />)}
     </div>
   )
 }
 
 function FocusContent(props: any) {
-  const { useSessions, sessions, workspaces, conversation, chatFileMentions, t } = props
+  const { useSessions, sessions, workspaces, conversation, chatFileMentions, uiSession, uiConversation, settingsScope, t } = props
   const prefs = usePrefs()
   const listState = useSessions((s: any) => s)
   const currentId = listState ? listState.current : undefined
   const snap = useSessionSnapshot(sessions, currentId)
-  const items = useMemo(() => (snap ? buildItems(snap.nodes || [], snap.runningCalls, t) : []), [snap, t])
+  // dsh 0.1.2: conversation content lives in the chat view's legacy slice;
+  // the session snapshot itself keeps only lifecycle/control state.
+  const chatView = useChatView(uiConversation, currentId)
+  const transcriptView = useTranscriptViewMode(settingsScope)
+  const legacy = useMemo(() => legacySliceOf(chatView, snap), [chatView, snap])
+      // `stable` = the streaming tail has drained (partial null): only a stable
+    // snapshot lets the LAST turn fold — while streaming it stays normal-form.
+    const stable = legacy.partial == null
+  const mdLabels = useMemo(() => markdownLabels(t), [t])
+    const items = useMemo(
+      () => (snap ? buildItems(legacy.nodes, legacy.runningCalls, t, transcriptView, stable) : []),
+      [snap, legacy, t, transcriptView, stable],
+    )
+  // User toggle state per process segment (keyed by the segment's turn seq —
+  // stable across snapshot rebuilds and history prepends, unlike an index
+  // key): overrides the mode-derived default. Reset whenever the setting
+  // flips, so the view always starts from the official presentation after a
+  // change.
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
+  useEffect(() => { setExpanded(new Set()) }, [transcriptView])
+  const wait = usePendingInteraction(uiSession, currentId, snap)
+  // Latest-items mirror: the anti-drift corrector below runs on a timer across
+  // many renders, so it must read items through a ref — a closed-over `items`
+  // would go stale on the next snapshot rebuild / history prepend.
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+
+  // ---- full-history load (dsh 0.1.2) ----
+  // The conversation is paged by turns now: a fresh binding only materializes
+  // the tail window, so a full-session reading view must page back to the
+  // start itself. While the overlay is open, drive the session face's
+  // loadOlder() until `hasMore` clears (bounded; aborted on unmount). The
+  // same pagination the official "加载更早" button drives — the overlay just
+  // runs it to completion.
+  const snapRef = useRef<any>(null)
+  snapRef.current = snap
+  useEffect(() => {
+    let alive = true
+    const b = (sessions && currentId != null) ? sessions.binding(currentId) : null
+    const face = b && b.session
+    if (!face || typeof face.loadOlder !== 'function') return
+    const load = async () => {
+      let pages = 0
+      while (alive && pages < 500) {
+        const s: any = snapRef.current
+        if (!s || !s.hasMore || s.openState !== 'open') break
+        if (s.loadingOlder) { await new Promise((r) => setTimeout(r, 60)); continue }
+        try { await face.loadOlder() } catch { break }
+        pages++
+        await new Promise((r) => setTimeout(r, 0))
+      }
+    }
+    load()
+    return () => { alive = false }
+  }, [sessions, currentId])
+
+  // Turn rail (official TurnNavigator replica): one mark per known turn,
+  // driven by the chat view's turn navigation index. Each mark's anchor seq
+  // resolves to its focus-item index — the overlay scroll target — and the
+  // previews reuse the official bounded prompt/response strings.
+  const rail: RailItem[] = useMemo(() => {
+    if (!chatView || !chatView.navigation || !chatView.navigation.items) return []
+    const out: RailItem[] = []
+    const used = new Set<number>()
+    let navItems: any[] = []
+    try { navItems = chatView.navigation.items() || [] } catch { navItems = [] }
+    for (const it of navItems) {
+      if (!it) continue
+      let seq: number | null = null
+      try {
+        const node = chatView.nodes && chatView.nodes.get ? chatView.nodes.get(it.anchorKey) : null
+        if (node && typeof node.anchorSeq === 'number') seq = node.anchorSeq
+      } catch { /* defensive */ }
+      let idx = seq != null ? findSeqIndex(items, seq) : -1
+      // Turn-process control nodes anchor at a FRACTIONAL seq (an insertion
+      // point between messages), which never equals a content seq — exact
+      // matching drops the turn's mark exactly while it streams (the state a
+      // reader is most likely looking at). Fall back to the nearest user row
+      // at or below the anchor: a turn-process anchor sits inside its own
+      // turn, so that row is the turn's own prompt.
+      if (idx < 0 && seq != null && Number.isFinite(seq)) {
+        for (let i = items.length - 1; i >= 0; i--) {
+          const row = items[i]
+          if ((row.kind === 'user' || row.kind === 'steering') && row.seq <= seq) { idx = i; break }
+        }
+      }
+      // A turn whose prompt row is not loaded yet also falls back onto an
+      // earlier row that already has its own mark — dedupe keeps the real one.
+      if (idx < 0 || used.has(idx)) continue
+      used.add(idx)
+      out.push({
+        turn: it.turn,
+        prompt: (it.prompt || '').replace(/\s+/g, ' ').trim(),
+        response: (it.response || '').replace(/\s+/g, ' ').trim(),
+        idx,
+      })
+    }
+    return out
+  }, [chatView, items])
 
   const navKeys: string[] = []
   const navPreviews: Record<string, string> = {}
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i]
-    if (it.kind === 'user' || it.kind === 'steering') {
-      const k = 'fm-' + i
-      navKeys.push(k)
-      navPreviews[k] = it.text.replace(/\s+/g, ' ').trim().slice(0, 80)
-    }
+  for (const r of rail) {
+    const k = 'fm-' + r.idx
+    navKeys.push(k)
+    navPreviews[k] = r.prompt
   }
 
   const [activeKey, setActiveKey] = useState<string | null>(navKeys.length ? navKeys[navKeys.length - 1] : null)
@@ -169,7 +341,14 @@ function FocusContent(props: any) {
     if (rafId.current !== null) return
     rafId.current = requestAnimationFrame(() => {
       rafId.current = null
-      setActiveKey(computeActive())
+      const c = computeActive()
+      // computeActive() measures anchor geometry; during the frame right after
+      // a positioning scroll (or while rows are still registering) it can
+      // return null even though the reader IS on a turn. Overwriting the
+      // highlight with null would make the active mark fall back to the LAST
+      // rail dot (activeIndex -1 → rail[rail.length-1]). Keep the previous
+      // highlight until geometry reports a real anchor again.
+      if (c !== null) setActiveKey(c)
       setZone((prev) => bottomZoneAfter(prev, bottomDistance()))
     })
   }
@@ -185,47 +364,108 @@ function FocusContent(props: any) {
   }
   const scrollToBottom = () => { if (bodyEl) bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'smooth' }) }
 
+  // ---- open positioning (pending-target model) ----
+  // dsh 0.1.2 pages history in asynchronously AND assembles the chat target
+  // lazily (the snapshot is empty right after activation), so neither the
+  // anchor seq nor the item list exists at mount. Keep the entry intent in a
+  // ref and resolve it lazily on every pass until the anchor materializes —
+  // with a deadline that falls back to the classic behaviors.
+  const entryRef = useRef<{ kind: 'auto'; seq: number } | { kind: 'anchor'; key: string } | { kind: 'lastUser' } | undefined>(undefined)
+  const positionedRef = useRef<boolean>(false)
+  const positionDeadlineRef = useRef<number>(0)
+  // One-shot anti-drift correction: after the loader finishes, re-anchor the
+  // saved reading position (prepend shifts it by the loaded height).
+  const correctionRef = useRef<{ seq: number; top: number } | null>(null)
+
   useEffect(() => {
-    // Auto-focus: jump to the user question that started the just-finished turn.
+    if (entryRef.current !== undefined) return
+    positionDeadlineRef.current = Date.now() + 6000
     const autoSeq = focusStore.consumeAutoSeq()
-    if (autoSeq != null) {
-      const idx = findSeqIndex(items, autoSeq)
-      if (idx >= 0) {
-        scrollToKey('fm-' + idx, false)
-        setActiveKey('fm-' + idx)
-      } else if (bodyEl) {
-        bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
-        setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
-      }
-      return
-    }
-    // Manual open: preserve the chat position captured from the underlying view.
+    if (autoSeq != null) { entryRef.current = { kind: 'auto', seq: autoSeq }; return }
     const anchorKey = focusStore.consumeAnchorKey()
-    const seq = resolveAnchorSeq(snap && snap.chat, anchorKey)
-    const idx = seq != null ? findSeqIndex(items, seq) : -1
-    if (prefs.scroll === 'preserve' && idx >= 0) {
-      scrollToKey('fm-' + idx, false)
-      setActiveKey('fm-' + idx)
-    } else if (prefs.scroll !== 'preserve') {
-      // Position sync off: open at the last message the user sent (the newest
-      // question), not at the very bottom of the conversation — the AI reply
-      // that follows it would otherwise push the question off-screen.
-      const lastIdx = lastUserIndex(items)
-      if (lastIdx >= 0) {
-        scrollToKey('fm-' + lastIdx, false)
-        setActiveKey('fm-' + lastIdx)
-      } else if (bodyEl) {
-        bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
-        setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
-      }
-    } else if (bodyEl) {
-      // Preserve requested but the captured anchor isn't in this overlay's
-      // items (e.g. an empty/compacted message): land at the freshest content.
-      bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
-      setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
-    }
+    if (prefs.scroll === 'preserve' && anchorKey) { entryRef.current = { kind: 'anchor', key: anchorKey }; return }
+    entryRef.current = { kind: 'lastUser' }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    if (positionedRef.current || entryRef.current === undefined) return
+    const entry = entryRef.current
+    // Wait for the history loader to finish first: pages PREPEND above the
+    // anchor, so positioning mid-load would drift as later pages land. The
+    // pure decision below repeats this rule so the two can never disagree.
+    let seq: number | null = null
+    if (entry.kind === 'auto') seq = entry.seq
+    else if (entry.kind === 'anchor') {
+      // dsh 0.1.2: the chat view's node store is the authoritative key → seq
+      // map (the session snapshot carries only lifecycle state). Resolve from
+      // the assembled chat view when it exists; while it is still being
+      // assembled the uiConversation target snapshot is the same store, so
+      // reading through the service keeps the anchor resolvable even on the
+      // mount render where the local chatView state has not landed yet.
+      let nodes = chatView && chatView.nodes
+      if (!nodes && uiConversation && currentId != null) {
+        try { nodes = uiConversation.binding(currentId).target('chat').getSnapshot()?.nodes } catch { /* defensive */ }
+      }
+      seq = resolveAnchorSeq(nodes, entry.key)
+    }
+    const decision = decideOpenScroll({
+      kind: entry.kind,
+      seq,
+      items,
+      hasMore: !!(snap && snap.hasMore),
+      deadlinePassed: Date.now() >= positionDeadlineRef.current,
+    })
+    if (decision.action === 'wait') return
+    if (decision.action === 'scroll') {
+      scrollToKey('fm-' + decision.index, false)
+      setActiveKey('fm-' + decision.index)
+      // A TRUE target scroll (the anchor's own seq matched a row) arms the
+      // anti-drift corrector: pages PREPEND above the anchor while the loader
+      // walks back and async content (images, highlight) shifts layout
+      // afterwards, which drifts the anchored row. Fallback scrolls (seq null)
+      // carry no target to hold steady.
+      const el = anchors['fm-' + decision.index]
+      if (decision.seq != null && el && bodyEl) {
+        correctionRef.current = {
+          seq: decision.seq,
+          top: el.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top + bodyEl.scrollTop,
+        }
+      }
+      positionedRef.current = true
+      return
+    }
+    // bottom
+    if (bodyEl) bodyEl.scrollTo({ top: bodyEl.scrollHeight, behavior: 'auto' })
+    setActiveKey(navKeys.length ? navKeys[navKeys.length - 1] : null)
+    positionedRef.current = true
+  }, [items, snap, chatView])
+
+  // Anti-drift convergence: async content (images, code highlight, late
+  // prepends) keeps shifting the anchored row after the initial scroll. For a
+  // short window, re-measure and nudge the scrollport back until the anchor
+  // holds steady at its recorded offset.
+  useEffect(() => {
+    const c = correctionRef.current
+    if (!c) return
+    let tries = 0
+    const timer = setInterval(() => {
+      tries++
+      // Read through the ref: `items` rebuilds on every snapshot (streaming
+      // tail, prepends), so the render-time closure is stale by design.
+      const items = itemsRef.current
+      const idx = findSeqIndex(items, c.seq)
+      const el = idx >= 0 ? anchors['fm-' + idx] : undefined
+      if (!el || !bodyEl) { if (tries > 40) { clearInterval(timer); correctionRef.current = null } return }
+      const now = el.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top + bodyEl.scrollTop
+      const delta = now - c.top
+      if (Math.abs(delta) <= 2 || tries > 40) { clearInterval(timer); correctionRef.current = null; return }
+      bodyEl.scrollTop += delta
+    }, 150)
+    return () => clearInterval(timer)
+    // Runs once per positioned open; items are read via itemsRef, which
+    // always mirrors the latest render.
+  }, [])
   // Zone seed: runs after the mount-positioning effect above (effects fire in
   // declaration order), so the dock's first form matches wherever the overlay
   // actually opened — at the live edge or up in the history. Seeded with
@@ -242,7 +482,11 @@ function FocusContent(props: any) {
   useEffect(() => {
     const el = bodyEl
     if (!el || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(() => scheduleRef.current())
+    setViewportW(el.clientWidth)
+    const ro = new ResizeObserver(() => {
+      setViewportW(el.clientWidth)
+      scheduleRef.current()
+    })
     ro.observe(el)
     return () => ro.disconnect()
     // scheduleRef is read through the ref — safe to run once.
@@ -305,9 +549,28 @@ function FocusContent(props: any) {
   }, [cardOpen, dockFocused, engaged])
 
   const loadImage = useCallback((attachment: any): Promise<string> => {
-    if (!conversation || !currentId) return Promise.reject(new Error('dsh-focus-overlay: conversation service unavailable'))
-    return conversation.resolveImage(currentId, attachment)
-  }, [conversation, currentId])
+    // dsh 0.1.2: the conversation controller's resolveImage gave way to the
+    // uiConversation assembly's session-authorized image cache. Both the sync
+    // throw and the async rejection fall through to the legacy resolver; a
+    // falsy result (imageUrl returned undefined) does too.
+    const modern = uiConversation && currentId
+      ? (async () => {
+        const url = await uiConversation.imageUrl(currentId, attachment)
+        if (url) return url
+        throw new Error('no url')
+      })()
+      : null
+    if (modern) return modern.catch(() => legacyResolve(attachment))
+    return legacyResolve(attachment)
+  }, [uiConversation, conversation, currentId])
+  // legacyResolve closes over the useCallback deps; defined via a helper so
+  // both paths share it. eslint-disable not needed (no hook deps lint here).
+  function legacyResolve(attachment: any): Promise<string> {
+    if (conversation && typeof conversation.resolveImage === 'function') {
+      return conversation.resolveImage(currentId, attachment)
+    }
+    return Promise.reject(new Error('dsh-focus-overlay: image resolver unavailable'))
+  }
 
   const fileMentionsFor = useCallback((node: any): any => {
     if (!chatFileMentions) return undefined
@@ -331,9 +594,9 @@ function FocusContent(props: any) {
   const inputState = useInputState(inputFace)
   const draftValue = inputFace ? (inputState && typeof inputState.draft === 'string' ? inputState.draft : '') : localDraft
   const draftEmpty = draftValue.trim() === ''
-  const pendingList: any[] = snap && snap.pending ? snap.pending : []
-  const pendingCount = pendingList.length
-  const wait = pendingCount > 0 ? pendingList[0] : null
+  // `wait` comes from the uiSession pending-interactions hook above (dsh 0.1.2
+  // shape: one PendingQuestion / PendingApproval per session).
+  const pending = !!wait
 
   const onDraftChange = (v: string) => {
     if (inputFace) {
@@ -378,7 +641,7 @@ function FocusContent(props: any) {
   const occCount = inputState && inputState.occurrences ? inputState.occurrences.length : 0
   const promptErr = snap && snap.promptError && snap.promptError.op === 'send' ? snap.promptError.error : null
   const errorLine = promptErr ? (promptErr.message || promptErr.code || 'send failed') : null
-  const form = bottomForm({ pending: pendingCount > 0, cardOpen, draftEmpty, inZone: zone, focused: dockFocused, engaged })
+  const form = bottomForm({ pending, cardOpen, draftEmpty, inZone: zone, focused: dockFocused, engaged })
 
   // The answer card lives only while its pending wait does — answered (even
   // from elsewhere) the region falls back to the normal forms. A pending
@@ -387,11 +650,11 @@ function FocusContent(props: any) {
   // focus-once ref, or a pill click cancelled by this takeover would
   // auto-focus the textarea unprompted when the bar next renders.
   useEffect(() => {
-    if (pendingCount === 0) { if (cardOpen) setCardOpen(false); return }
+    if (!pending) { if (cardOpen) setCardOpen(false); return }
     focusBarOnce.current = false
     setDockFocused(false)
     setEngaged(false)
-  }, [pendingCount, cardOpen])
+  }, [pending, cardOpen])
 
   // Expand-on-click focus: landing the caret straight in the textarea saves a
   // click for the pill → bar path. `engaged` is the one-render handoff only —
@@ -410,41 +673,104 @@ function FocusContent(props: any) {
     if (row && row.displayTitle) title = row.displayTitle
   }
 
+  // Content width: the overlay's own draggable column (official WidthHandle
+  // replica). It does NOT inherit the main view's width — the overlay manages
+  // its own preference, dragged live via the side handles and persisted in the
+  // plugin prefs. `dragWidth` holds the in-flight value so the column tracks
+  // the pointer in real time; commit persists it into the prefs store.
+  const [dragWidth, setDragWidth] = useState<number | null>(null)
+  const [viewportW, setViewportW] = useState<number>(0)
+  const width = dragWidth ?? prefs.width
+  const clampWidth = useCallback((w: number) => {
+    const vw = bodyEl ? bodyEl.clientWidth : viewportW
+    const max = Math.max(CONTENT_MIN, vw - CONTENT_EDGE_BUDGET)
+    return Math.round(Math.min(Math.max(w, CONTENT_MIN), max))
+  }, [viewportW])
+  const onWidthStart = useCallback(() => clampWidth(prefs.width), [clampWidth, prefs.width])
+  const onWidthDrag = useCallback((w: number) => setDragWidth(clampWidth(w)), [clampWidth])
+  const onWidthCommit = useCallback((w: number) => {
+    const clamped = clampWidth(w)
+    setDragWidth(null)
+    if (clamped !== prefs.width) prefsStore.update({ width: clamped })
+  }, [clampWidth, prefs.width])
+  const onWidthEnd = useCallback(() => setDragWidth(null), [])
+
   let body: any
   if (!currentId) {
     body = <div className="fm-empty">{t('empty')}</div>
   } else if (snap === null) {
     body = <div className="fm-empty">{t('loading')}</div>
   } else {
-    const partial = snap.partial
+    const partial = legacy.partial
     const partialBlocks = partial ? partial.blocks : []
     const running = !!snap.running
     const kids: any[] = []
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i]
-      const key = 'fm-' + i
+    if (snap.hasMore) {
+      // History still paging in (dsh 0.1.2 turn pagination): a quiet marker
+      // above the transcript while the loader walks back to the start.
+      kids.push(<div key="fm-history" className="fm-hidden">{t('loading')}</div>)
+    }
+    // One item renderer, used at top level (user rows register chat anchors
+    // for position sync and the nav rail) and recursively inside an expanded
+    // turn-process segment (nested rows never register anchors).
+    const renderItem = (it: any, key: string, registerAnchor: boolean): any => {
       if (it.kind === 'user') {
-        kids.push(
-          <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (el) anchors[key] = el; else delete anchors[key] }}>
+        return (
+          <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (registerAnchor) { if (el) anchors[key] = el; else delete anchors[key] } }}>
             <div className="fm-user"><MessageText text={it.text} /></div>
-          </div>,
+          </div>
         )
-      } else if (it.kind === 'steering') {
-        kids.push(
-          <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (el) anchors[key] = el; else delete anchors[key] }}>
-            <div className="fm-user fm-steering"><MessageText text={it.text} /></div>
-          </div>,
-        )
-      } else if (it.kind === 'assistant') {
-        kids.push(<AssistantItem key={key} blocks={it.blocks} loadImage={loadImage} fileMentions={fileMentionsFor(it)} />)
-      } else if (it.kind === 'hidden') {
-        kids.push(<div key={key} className="fm-hidden">· {it.text} ·</div>)
-      } else if (it.kind === 'error') {
-        kids.push(<div key={key} className="fm-msg fm-error">{it.text}</div>)
       }
+      if (it.kind === 'steering') {
+        return (
+          <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (registerAnchor) { if (el) anchors[key] = el; else delete anchors[key] } }}>
+            <div className="fm-user fm-steering"><MessageText text={it.text} /></div>
+          </div>
+        )
+      }
+      if (it.kind === 'assistant') {
+        return <AssistantItem key={key} blocks={it.blocks} loadImage={loadImage} fileMentions={fileMentionsFor(it)} labels={mdLabels} />
+      }
+      if (it.kind === 'error') {
+        return <div key={key} className="fm-msg fm-error">{it.text}</div>
+      }
+      if (it.kind === 'hidden') {
+        return <div key={key} className="fm-hidden">· {it.text} ·</div>
+      }
+      if (it.kind === 'turnProcess') {
+        const open = !it.collapsed || expanded.has(it.seq)
+        const toggle = () => setExpanded((prev) => {
+          const next = new Set(prev)
+          if (next.has(it.seq)) next.delete(it.seq)
+          else next.add(it.seq)
+          return next
+        })
+        return (
+          <div key={key}>
+            {it.collapsed ? (
+              <button
+                type="button"
+                className="fm-process-root"
+                data-open={open || undefined}
+                aria-expanded={open}
+                onClick={toggle}
+              >
+                <span className="fm-process-label">{processLabel(it.counts, t)}</span>
+                <IconChevronDownOutline14 className="fm-process-chevron" />
+              </button>
+            ) : null}
+            {open ? it.workItems.map((wi: any, wi2: number) => renderItem(wi, key + '-w' + wi2, false)) : null}
+          </div>
+        )
+      }
+      return null
+    }
+    for (let i = 0; i < items.length; i++) {
+      const rendered = renderItem(items[i], 'fm-' + i, true)
+      if (rendered) kids.push(rendered)
     }
     if (partialBlocks.length) {
-      kids.push(<AssistantItem key="fm-partial" blocks={partialBlocks} loadImage={loadImage} fileMentions={undefined} />)
+      kids.push(<AssistantItem key="fm-partial" blocks={partialBlocks} loadImage={loadImage} fileMentions={undefined} labels={mdLabels} />)
     }
     if (running) {
       kids.push(
@@ -453,30 +779,26 @@ function FocusContent(props: any) {
         </div>,
       )
     }
-    body = <div className="fm-inner" style={{ maxWidth: prefs.width }}>{kids}</div>
+    body = <div className="fm-inner" style={{ maxWidth: width, '--fm-content-width': `${width}px` } as React.CSSProperties}>{kids}</div>
   }
 
   const activeIndex = activeKey ? navKeys.indexOf(activeKey) : -1
-  const navHeight = (navKeys.length - 1) * 14 + 22
-  const dotTop = (i: number) => i * 14 + 11 + (i < activeIndex ? -7 : i > activeIndex ? 7 : 0)
+  // The active mark's turn number — the rail highlights marks by turn, the
+  // overlay's scroll logic speaks in focus-item keys.
+  const activeTurn = rail.length
+    ? (activeIndex >= 0 && rail[activeIndex] ? rail[activeIndex].turn : rail[rail.length - 1].turn)
+    : null
 
-  const nav = (prefs.navbar && navKeys.length >= 2)
+  const nav = (prefs.navbar && rail.length >= 2)
     ? (
-      <div className="fm-nav" style={{ height: navHeight }}>
-        {navKeys.map((k, i) => (
-          <button
-            key={k}
-            type="button"
-            aria-label={navPreviews[k]}
-            className={'fm-nav-dot' + (activeKey === k ? ' fm-nav-dot-active' : '')}
-            style={{ top: dotTop(i) }}
-            onClick={() => scrollToKey(k, true)}
-          >
-            <span className="fm-nav-dot-core" />
-            <span className="fm-nav-tip">{navPreviews[k]}</span>
-          </button>
-        ))}
-      </div>
+      <TurnRail
+        items={rail}
+        activeTurn={activeTurn}
+        onNavigate={(item) => scrollToKey('fm-' + item.idx, true)}
+        label={t('nav.label')}
+        jumpLabel={(turn) => t('nav.jump', { n: turn })}
+        turnLabel={(turn) => t('nav.turn', { n: turn })}
+      />
     )
     : null
 
@@ -485,7 +807,7 @@ function FocusContent(props: any) {
   // and its button now morphs it into the in-place answer card instead of
   // exiting focus mode. It hides while the card is open (the card IS the
   // reply surface then) and clears by itself once the user answers.
-  const waiting = pendingCount > 0 && !cardOpen
+  const waiting = pending && !cardOpen
 
   // "New reply ready" — a one-shot ping, cleared when the overlay closes so it
   // never re-appears on the next open.
@@ -529,7 +851,18 @@ function FocusContent(props: any) {
         <div className="fm-title">{title}</div>
         <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
       </div>
-      <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={scheduleRecompute}>{body}</div>
+      <div className="fm-body-wrap">
+        <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={scheduleRecompute}>{body}</div>
+        {currentId && snap !== null ? (
+          <WidthHandles
+            width={width}
+            onStart={onWidthStart}
+            onDrag={onWidthDrag}
+            onCommit={onWidthCommit}
+            onEnd={onWidthEnd}
+          />
+        ) : null}
+      </div>
       {nav}
       {currentId && snap !== null ? (
         <div className="fm-dock">
@@ -557,10 +890,31 @@ function FocusContent(props: any) {
   )
 }
 
+/** Error boundary around the overlay content: a render crash would otherwise
+ *  unmount the slot subtree and every later entry would crash again — the
+ *  toggle would look permanently dead. The boundary logs, renders nothing for
+ *  the failed pass, and re-arms on the next open (keyed by open count). */
+class FocusErrorBoundary extends Component<{ resetKey: number; children: ReactNode }, { error: any }> {
+  state = { error: null as any }
+  static getDerivedStateFromError(error: any) { return { error } }
+  componentDidUpdate(prev: { resetKey: number }) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null })
+  }
+  render() {
+    if (this.state.error) {
+      console.error('[dsh-focus-overlay] overlay render failed; it will retry on the next open', this.state.error)
+      return null
+    }
+    return this.props.children
+  }
+}
+
 export function FocusOverlay(props: any) {
   const on = useFocus()
-  if (!on) return null
-  return <FocusContent {...props} />
+  // Count false→true transitions so the boundary re-arms every fresh open.
+  const opens = useRef(0)
+  if (!on) { opens.current++; return null }
+  return <FocusErrorBoundary resetKey={opens.current}><FocusContent {...props} /></FocusErrorBoundary>
 }
 
 export function FocusToggle({ t }: { t: FocusTranslate }) {
@@ -602,14 +956,6 @@ function FocusPrefsFields({ t }: { t: FocusTranslate }) {
           <span className="fm-plugin-check-label">{t('settings.navbar')}</span>
         </label>
         <p className="fm-plugin-field-hint">{t('settings.navbar.hint')}</p>
-      </div>
-      <div className="fm-plugin-field">
-        <div className="fm-plugin-field-head">
-          <span className="fm-plugin-field-label">{t('settings.width')}</span>
-          <span className="fm-plugin-field-value">{prefs.width}px</span>
-        </div>
-        <input type="range" className="fm-plugin-range" min={480} max={1200} step={40} value={prefs.width} onChange={(e) => prefsStore.update({ width: Number(e.target.value) })} />
-        <p className="fm-plugin-field-hint">{t('settings.width.hint')}</p>
       </div>
     </>
   )

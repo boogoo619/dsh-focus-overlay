@@ -2,17 +2,31 @@
 export const FOCUS_CSS = `
 .fm-overlay{position:fixed;inset:0;z-index:2147483000;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
 .fm-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));flex:0 0 auto}
-.fm-title{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fm-body{flex:1 1 auto;overflow-y:auto;padding:28px 28px 110px}
+.fm-title{font-size:calc(14px + var(--dsh-content-font-delta,0px));font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fm-body-wrap{position:relative;flex:1 1 auto;display:flex;min-height:0}
+.fm-body{flex:1 1 auto;min-width:0;overflow-y:auto;padding:28px 28px 110px}
 .fm-inner{max-width:760px;margin:0 auto}
-.fm-msg{margin:0 0 24px}
-.fm-user-msg{margin-bottom:44px}
-.fm-user{background:var(--dsw-specific-bubble,#eaf2ff);color:var(--dsw-alias-label-primary,#1a1a1a);border-radius:14px;padding:10px 14px;word-break:break-word;max-width:85%;margin-left:auto}
+.fm-msg{margin:0}
+.fm-user-msg{margin:0}
+.fm-inner>*{margin:var(--dsh-chat-flow-gap,16px) 0 0}
+.fm-inner>*:first-child{margin-top:0}
+.fm-user{background:var(--dsw-specific-bubble,#eaf2ff);color:var(--dsw-alias-label-primary,#1a1a1a);font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word;border-radius:22px;padding:10px 16px;max-width:min(calc(var(--fm-content-width,748px) * .702),82%);margin-left:auto}
 .fm-steering{opacity:.85}
-.fm-assistant{word-break:break-word}
+.fm-assistant{word-break:break-word;font:var(--dsw-font-markdown-base,400 var(--dsh-content-font-size,14px)/calc(24px + var(--dsh-content-font-delta,0px)) var(--dsw-font-family,sans-serif))}
 .fm-image{max-width:100%;border-radius:8px;margin:8px 0}
-.fm-hidden{text-align:center;color:var(--dsw-alias-label-secondary,#888);font-size:12px;line-height:1.6;margin:6px 0 18px;user-select:none}
-.fm-error{color:var(--dsw-alias-state-error-primary,#d23);font-size:13px;white-space:pre-wrap}
+/* Classic process fold (normal mode, and the expanded work-part rows in
+   compact): centered, muted, secondary typography. */
+.fm-hidden{text-align:center;color:var(--dsw-alias-label-secondary,#888);font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(24px + var(--dsh-content-font-delta,0px));padding:2px 0;user-select:none}
+/* Turn process disclosure (compact 对话显示) — replica of the official
+   TurnProcessNodeView row: 33px button, bottom hairline, chevron that
+   rotates from -90deg to 0 when open, 8px breathing room when closed. */
+.fm-process-root{box-sizing:border-box;border:none;border-bottom:.5px solid var(--dsw-alias-border-l2);width:100%;min-width:0;height:33px;color:var(--dsw-alias-label-secondary);cursor:pointer;text-align:left;background:0 0;align-items:center;padding:0 0 8px;display:flex;font:inherit}
+.fm-process-root:not([data-open]){margin-bottom:8px}
+.fm-process-label{text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:14px;line-height:24px;overflow:hidden}
+.fm-process-chevron{width:16px;height:16px;color:var(--dsw-alias-label-tertiary);flex:none;margin-left:6px;transition:transform .1s;transform:rotate(-90deg)}
+.fm-process-root[data-open] .fm-process-chevron{transform:rotate(0)}
+@media (prefers-reduced-motion:reduce){.fm-process-chevron{transition:none}}
+.fm-error{color:var(--dsw-alias-state-error-primary,#d23);font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));white-space:pre-wrap}
 /* "正在工作" live line — the shimmer is a 1:1 replica of the official
    generating indicator in dsh-client-ui-conversation (the "Deep Diving"
    turn-status): brand-blue text (--dsw-static-deepseek-500) with a light
@@ -26,8 +40,8 @@ export const FOCUS_CSS = `
    label as one unit. Fallbacks: no background-clip:text → secondary gray
    label; prefers-reduced-motion → animation off, label stays solid
    deepseek-500 (the official base color). */
-.fm-running{text-align:center;margin:10px 0 20px;user-select:none;animation:fm-up .18s ease}
-.fm-running-text{color:var(--dsw-alias-label-secondary,#888);font:var(--dsw-font-s-strong-14,500 14px/22px var(--dsw-font-family,sans-serif));white-space:nowrap}
+.fm-running{text-align:center;user-select:none;animation:fm-up .18s ease}
+.fm-running-text{color:var(--dsw-alias-label-secondary,#888);font:500 var(--dsh-content-font-size,14px)/calc(22px + var(--dsh-content-font-delta,0px)) var(--dsw-font-family,sans-serif);white-space:nowrap}
 /* Dashes: separate spans with fixed margins instead of space characters — in
    CJK/Latin mixed runs the browser itemizes the two U+0020 spaces into
    different fonts (one Latin-narrow, one Han-wide), and the Han font's en
@@ -40,17 +54,7 @@ export const FOCUS_CSS = `
 @keyframes fm-sweep{to{background-position:0 0}}
 @media (prefers-reduced-motion:reduce){.fm-running{animation:none}.fm-running-text{background:0 0;color:var(--dsw-static-deepseek-500,#4176e6);-webkit-text-fill-color:currentColor;animation:none}}
 .fm-empty{color:var(--dsw-alias-label-secondary,#888);padding:48px 16px;text-align:center}
-.fm-nav{position:absolute;right:20px;top:50%;transform:translateY(-50%);display:block;width:16px;z-index:2;pointer-events:auto;transition:transform .18s ease}
-.fm-nav:hover{transform:translateY(-50%) translateX(-6px)}
-.fm-nav-dot{position:absolute;left:50%;transform:translate(-50%,-50%);cursor:pointer;background:transparent;border:0;padding:0;width:16px;height:auto;display:flex;align-items:center;justify-content:center;transition:top .22s ease}
-.fm-nav-dot::after{content:'';position:absolute;inset:-5px -8px}
-.fm-nav-dot-core{display:block;width:8px;height:8px;border-radius:999px;background:var(--dsw-alias-label-secondary,#999);opacity:.45;transition:opacity .15s ease,background .15s ease,height .15s ease,transform .18s ease}
-.fm-nav:hover .fm-nav-dot:not(.fm-nav-dot-active) .fm-nav-dot-core{transform:scale(1.15);opacity:.9}
-.fm-nav-dot:not(.fm-nav-dot-active):hover .fm-nav-dot-core{background:var(--dsw-static-deepseek-500,#4176e6);opacity:1;transform:scale(1.5)}
-.fm-nav-dot-active .fm-nav-dot-core{background:var(--dsw-static-deepseek-500,#4176e6);height:22px;opacity:1}
-.fm-nav-tip{position:absolute;right:calc(100% + 8px);top:50%;transform:translateY(-50%);display:none;width:260px;box-sizing:border-box;white-space:normal;overflow-wrap:break-word;word-break:break-word;background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;box-shadow:0 4px 16px rgba(0,0,0,.12);pointer-events:none;text-align:left}
-.fm-nav-dot:hover .fm-nav-tip{display:block}
-.fm-reply-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:84px;z-index:2;display:flex;align-items:center;gap:10px;background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:100px;padding:8px 8px 8px 16px;box-shadow:0 4px 16px rgba(0,0,0,.12);font-size:13px}
+.fm-reply-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:84px;z-index:2;display:flex;align-items:center;gap:10px;background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:100px;padding:8px 8px 8px 16px;box-shadow:var(--dsw-shadow-lv2,0 4px 16px rgba(0,0,0,.12));font-size:var(--dsh-content-font-size-secondary,13px)}
 .fm-reply-toast-dot{width:8px;height:8px;border-radius:999px;background:var(--dsw-static-deepseek-500,#4176e6);flex:0 0 auto}
 .fm-reply-toast-text{white-space:nowrap}
 /* ---- bottom dock: bar / pill / jump-to-bottom / answer card ----
@@ -61,7 +65,7 @@ export const FOCUS_CSS = `
    hover option tinting. */
 .fm-dock{position:absolute;left:50%;transform:translateX(-50%);bottom:18px;z-index:3;width:calc(100% - 96px);display:flex;justify-content:center;pointer-events:none}
 .fm-dock>*{pointer-events:auto;animation:fm-up .18s ease}
-.fm-bar{box-sizing:border-box;width:100%;background:var(--dsw-specific-input-major,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l2-darkmode-thin,rgba(0,0,0,.12));box-shadow:var(--dsw-shadow-lv2,0 4px 16px rgba(0,0,0,.12));border-radius:22px;padding-top:10px;display:flex;flex-direction:column;font-size:16px;line-height:24px}
+.fm-bar{box-sizing:border-box;width:100%;background:var(--dsw-specific-input-major,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l2-darkmode-thin,rgba(0,0,0,.12));box-shadow:var(--dsw-shadow-lv2,0 4px 16px rgba(0,0,0,.12));border-radius:22px;padding-top:10px;display:flex;flex-direction:column;font-size:calc(var(--dsh-content-font-size,14px) + 2px);line-height:calc(24px + var(--dsh-content-font-delta,0px))}
 .fm-bar-row{display:flex;align-items:flex-end;gap:12px;min-width:0;padding:2px 8px 6px}
 /* flex-end anchors the send button to the row's bottom edge, so a multi-line
    draft grows the textarea upward and the button's distance to the bar's
@@ -90,10 +94,10 @@ export const FOCUS_CSS = `
 .fm-card-close{width:24px;height:24px;display:grid;place-items:center;flex:none;cursor:pointer;border:none;border-radius:999px;background:0 0;color:var(--dsw-alias-label-tertiary,#999);padding:0}
 .fm-card-close:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-primary,#1a1a1a)}
 .fm-card-approval .fm-card-close,.fm-card-approval .fm-card-close:hover:not(:disabled){color:inherit}
-.fm-card-body{overscroll-behavior:contain;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow-y:auto;padding-bottom:8px;font-size:14px;line-height:22px}
+.fm-card-body{overscroll-behavior:contain;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow-y:auto;padding-bottom:8px;font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}
 .fm-card-q{display:flex;flex-direction:column}
-.fm-card-q-text{margin:0 2px 8px;padding:0 22px;white-space:pre-wrap;word-break:break-word;font-size:16px;font-weight:500;line-height:22px}
-.fm-card-detail{color:var(--dsw-alias-label-secondary,#888);margin:0 2px 8px;padding:0 22px;font-size:14px;line-height:22px}
+.fm-card-q-text{margin:0 2px 8px;padding:0 22px;white-space:pre-wrap;word-break:break-word;font-size:calc(var(--dsh-content-font-size,14px) + 2px);font-weight:500;line-height:calc(22px + var(--dsh-content-font-delta,0px))}
+.fm-card-detail{color:var(--dsw-alias-label-secondary,#888);margin:0 2px 8px;padding:0 22px;font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}
 .fm-card-opts{display:flex;flex-direction:column;gap:1px;margin:8px 0 0;padding:4px 12px}
 .fm-opt{width:100%;min-height:40px;color:inherit;text-align:left;cursor:pointer;background:0 0;border:1px solid #0000;border-radius:12px;flex-shrink:0;display:flex;align-items:flex-start;gap:8px;padding:8px 12px 8px 8px;transition:background-color .12s,border-color .12s;font:inherit}
 .fm-opt:hover:not(:disabled),.fm-opt-on{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}
@@ -105,13 +109,13 @@ export const FOCUS_CSS = `
 .fm-opt-check>*{grid-area:1/1}
 .fm-opt-copy{flex:1;min-width:0}
 .fm-opt-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px}
-.fm-opt-label{font-size:14px;font-weight:500;line-height:24px;word-break:break-word}
+.fm-opt-label{font-size:var(--dsh-content-font-size,14px);font-weight:500;line-height:calc(24px + var(--dsh-content-font-delta,0px));word-break:break-word}
 .fm-opt-badge{background:var(--dsw-specific-sidebar-nav-item-active-accent,rgba(65,118,230,.12));color:var(--dsw-alias-button-info-fill,#4176e6);border-radius:6px;padding:0 4px;font-size:11px;font-weight:600;line-height:18px}
-.fm-opt-desc{color:var(--dsw-alias-label-tertiary,#999);font-size:14px;line-height:24px;word-break:break-word}
+.fm-opt-desc{color:var(--dsw-alias-label-tertiary,#999);font-size:var(--dsh-content-font-size,14px);line-height:calc(24px + var(--dsh-content-font-delta,0px));word-break:break-word}
 .fm-card-custom{margin:0 12px;border:1px solid #0000;border-radius:12px;flex-shrink:0;display:flex;align-items:center;min-height:40px;padding:8px 12px;transition:background-color .12s,border-color .12s}
 .fm-card-custom:hover,.fm-card-custom:focus-within{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}
 .fm-card-custom:focus-within{border-color:var(--dsw-alias-border-l2,rgba(0,0,0,.18))}
-.fm-card-field{min-width:0;width:100%;border:none;outline:none;background:0 0;color:inherit;font:inherit;font-size:14px;line-height:24px;padding:0}
+.fm-card-field{min-width:0;width:100%;border:none;outline:none;background:0 0;color:inherit;font:inherit;font-size:var(--dsh-content-font-size,14px);line-height:calc(24px + var(--dsh-content-font-delta,0px));padding:0}
 .fm-card-field::placeholder{color:var(--dsw-alias-label-caption,#999)}
 .fm-card-foot{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 16px 12px}
 .fm-card-err{flex:1 1 auto;min-height:16px;color:var(--dsw-alias-state-error-primary,#d23);font-size:11px;line-height:16px;word-break:break-word}
@@ -135,9 +139,9 @@ export const FOCUS_CSS = `
 .fm-plugin-field-value{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
 .fm-plugin-field-hint{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:1.5}
 .fm-plugin-check{align-items:center;gap:8px;display:flex;cursor:pointer;user-select:none}
-.fm-plugin-check input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--dsw-alias-brand-primary,#4176e6)}
+.fm-plugin-check input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--dsw-static-deepseek-500,#4176e6)}
 .fm-plugin-check-label{color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5}
-.fm-plugin-range{width:100%;max-width:280px;cursor:pointer;accent-color:var(--dsw-alias-brand-primary,#4176e6)}
+.fm-plugin-range{width:100%;max-width:280px;cursor:pointer;accent-color:var(--dsw-static-deepseek-500,#4176e6)}
 /* DSH-better-sidebar compatibility: its panel host (top-right toggle cluster +
    right/bottom panels) is appended to document.body at z-index 40/45, above
    shell.overlay's z-20 layer, so this overlay cannot cover it. Hide the host
@@ -159,3 +163,29 @@ body[data-fm-focus] #root :has(> [data-slot="conversation"]){margin-bottom:0!imp
 .fm-onboard-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 @media (width<=560px){.fm-onboard-content{padding:24px}}
 `
+
+// ---- shared style injection (component-owned stylesheets) ----
+
+const injectedStyles = new Map<string, HTMLStyleElement>()
+
+/** Inject a named package stylesheet once and return a dispose function. The
+ *  map keeps duplicates out across mount/unmount cycles; the dispose removes
+ *  the element so plugin unload (or the component's effect cleanup) never
+ *  leaks <style> nodes. */
+export function injectStyle(id: string, css: string): () => void {
+  if (typeof document === 'undefined') return () => {}
+  let el = injectedStyles.get(id)
+  if (!el) {
+    el = document.createElement('style')
+    el.setAttribute('data-plugin', 'dsh-focus-overlay')
+    el.setAttribute('data-fm-style', id)
+    el.textContent = css
+    document.head.appendChild(el)
+    injectedStyles.set(id, el)
+  }
+  const node = el
+  return () => {
+    node.remove()
+    injectedStyles.delete(id)
+  }
+}
