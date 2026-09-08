@@ -158,9 +158,13 @@ export const FOCUS_CSS = `
 .fm-plugin-card-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}
 .fm-plugin-card-chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}
 .fm-plugin-card-chevron-open{transform:rotate(180deg)}
-.fm-plugin-card-body{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:12px}
+.fm-plugin-card-body{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:16px}
 .fm-plugin-field{flex-direction:column;gap:6px;padding:12px 0;display:flex}
 .fm-plugin-field+.fm-plugin-field{border-top:1px solid var(--dsw-alias-border-l2)}
+/* The stats row ends the card body, so it carries NO bottom padding of its
+   own — the body's 16px padding-bottom is the entire below-gap, matching the
+   row's 16px above-gap after the divider (symmetric, one rhythm). */
+.fm-plugin-field-stat{padding:16px 0 0}
 .fm-plugin-field-head{align-items:center;gap:8px;display:flex}
 .fm-plugin-field-label{min-width:0;color:var(--dsw-alias-label-primary);flex:1;font-size:13px;font-weight:500;line-height:1.5}
 .fm-plugin-field-value{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}

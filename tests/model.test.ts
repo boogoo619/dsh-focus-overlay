@@ -19,6 +19,10 @@ import {
   onboardingSeen,
   hotkeyShouldEnter,
   decideOpenScroll,
+  readEntryCount,
+  readStarred,
+  shouldShowStar,
+  STAR_THRESHOLD,
 } from '../src/client/model'
 
 // Minimal translate stub: renders the key plus the interpolated `n` so tests
@@ -802,5 +806,56 @@ describe('legacy fallback edges', () => {
   it('detectSettledCompletion accepts runningCalls so the legacy shape still judges', () => {
     const outcome = detectSettledCompletion({ partial: null, nodes: [], runningCalls: [{ name: 'bash' }] })
     expect(outcome).toHaveProperty('settled')
+  })
+})
+
+describe('readEntryCount', () => {
+  it('reads the persisted counter object', () => {
+    expect(readEntryCount(JSON.stringify({ entries: 7 }))).toBe(7)
+    expect(readEntryCount(JSON.stringify({ entries: 0 }))).toBe(0)
+  })
+
+  it('reads absent, broken and malformed storage as 0', () => {
+    expect(readEntryCount(null)).toBe(0)
+    expect(readEntryCount('')).toBe(0)
+    expect(readEntryCount('{oops')).toBe(0)
+    expect(readEntryCount('"just a string"')).toBe(0)
+    expect(readEntryCount('12')).toBe(0)
+    expect(readEntryCount('{}')).toBe(0)
+    expect(readEntryCount(JSON.stringify({ entries: 'many' }))).toBe(0)
+  })
+
+  it('floors fractions and clamps negatives and non-finite values to 0', () => {
+    expect(readEntryCount(JSON.stringify({ entries: 3.9 }))).toBe(3)
+    expect(readEntryCount(JSON.stringify({ entries: -2 }))).toBe(0)
+    expect(readEntryCount(JSON.stringify({ entries: NaN }))).toBe(0)
+    expect(readEntryCount(JSON.stringify({ entries: null }))).toBe(0)
+  })
+})
+
+describe('shouldShowStar', () => {
+  it('shows the Star nudge only past the threshold (strictly greater)', () => {
+    expect(STAR_THRESHOLD).toBe(100)
+    expect(shouldShowStar(0)).toBe(false)
+    expect(shouldShowStar(99)).toBe(false)
+    expect(shouldShowStar(100)).toBe(false)
+    expect(shouldShowStar(101)).toBe(true)
+  })
+})
+
+describe('readStarred', () => {
+  it('reads the persisted starred flag', () => {
+    expect(readStarred(JSON.stringify({ entries: 7, starred: true }))).toBe(true)
+    expect(readStarred(JSON.stringify({ entries: 7, starred: false }))).toBe(false)
+  })
+
+  it('treats absent, broken and malformed storage as not-starred', () => {
+    expect(readStarred(null)).toBe(false)
+    expect(readStarred('')).toBe(false)
+    expect(readStarred('{oops')).toBe(false)
+    expect(readStarred('true')).toBe(false)
+    expect(readStarred('{}')).toBe(false)
+    expect(readStarred(JSON.stringify({ starred: 'yes' }))).toBe(false)
+    expect(readStarred(JSON.stringify({ starred: 1 }))).toBe(false)
   })
 })

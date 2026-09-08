@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { onboardingSeen } from './model'
+import { onboardingSeen, readEntryCount, readStarred } from './model'
 
 /** User preferences, persisted to localStorage (bundle plugins have full browser access). */
 export interface FocusPrefs {
@@ -59,4 +59,50 @@ export const onboardingStore = {
   markDone: () => {
     try { localStorage.setItem(ONBOARD_KEY, ONBOARD_VERSION) } catch { /* ignore */ }
   },
+}
+
+// ---- focus stats (counter + starred flag; bumped/written by FocusView) ----
+const STATS_KEY = 'dsh-focus-overlay:stats'
+
+/** `starred` records that the GitHub Star button has been used once — the
+ *  card then offers a plain project-page button instead of asking again. */
+interface FocusStats { entries: number; starred: boolean }
+
+function loadStats(): FocusStats {
+  try {
+    const raw = localStorage.getItem(STATS_KEY)
+    return { entries: readEntryCount(raw), starred: readStarred(raw) }
+  } catch { return { entries: 0, starred: false } }
+}
+
+let stats: FocusStats = loadStats()
+const statsListeners: Array<() => void> = []
+
+function persistStats(next: FocusStats) {
+  stats = next
+  try { localStorage.setItem(STATS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+  for (const l of statsListeners) l()
+}
+
+export const statsStore = {
+  getEntries: (): number => stats.entries,
+  isStarred: (): boolean => stats.starred,
+  /** One focus-mode open. Writes through to localStorage (best effort); when
+   *  storage is unavailable the in-memory value still counts for the session. */
+  bumpEntries: () => persistStats({ ...stats, entries: stats.entries + 1 }),
+  /** Mark the Star button as used (idempotent). */
+  markStarred: () => { if (!stats.starred) persistStats({ ...stats, starred: true }) },
+  subscribe: (l: () => void) => { statsListeners.push(l); return () => { const i = statsListeners.indexOf(l); if (i >= 0) statsListeners.splice(i, 1) } },
+}
+
+export function useEntryCount(): number {
+  const [n, setN] = useState<number>(statsStore.getEntries)
+  useEffect(() => statsStore.subscribe(() => setN(statsStore.getEntries)), [])
+  return n
+}
+
+export function useStarred(): boolean {
+  const [s, setS] = useState<boolean>(statsStore.isStarred)
+  useEffect(() => statsStore.subscribe(() => setS(statsStore.isStarred)), [])
+  return s
 }

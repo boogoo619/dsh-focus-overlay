@@ -501,6 +501,44 @@ export function onboardingSeen(stored: string | null, version: string): boolean 
   return stored === version
 }
 
+// ---- focus-entry counter (persistence lives in settings.ts) ----
+
+/** Parse the persisted focus-entry counter (`{"entries":n}` JSON). Anything
+ *  unreadable — null, broken JSON, a non-number or a negative — reads as 0,
+ *  so one corrupted write can never make the settings page show a bogus
+ *  count; fractions floor (a counter is always whole). */
+export function readEntryCount(raw: string | null): number {
+  try {
+    if (!raw) return 0
+    const parsed = JSON.parse(raw) as any
+    if (!parsed || typeof parsed !== 'object') return 0
+    const n = parsed.entries
+    if (typeof n !== 'number' || !Number.isFinite(n)) return 0
+    return Math.max(0, Math.floor(n))
+  } catch { return 0 }
+}
+
+/** The entry count from which the settings card starts offering the GitHub
+ *  Star button — strictly greater than 100, per the agreed rule. */
+export const STAR_THRESHOLD = 100
+
+/** Whether the settings card should show the Star nudge for this entry count. */
+export function shouldShowStar(entries: number): boolean {
+  return entries > STAR_THRESHOLD
+}
+
+/** Whether the persisted stats mark the Star button as already used — the
+ *  card then offers a plain "open the project page" button instead of asking
+ *  for a star again. Anything unreadable reads as not-starred. */
+export function readStarred(raw: string | null): boolean {
+  try {
+    if (!raw) return false
+    const parsed = JSON.parse(raw) as any
+    if (!parsed || typeof parsed !== 'object') return false
+    return parsed.starred === true
+  } catch { return false }
+}
+
 /** Whether a keydown should enter focus mode via the F hotkey. Pure decision so
  *  the guard rails are unit-testable: the pref must be enabled, focus must not
  *  already be open, the press must not land in an editable element (composer /

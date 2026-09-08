@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Component, type ReactNode } from 'react'
 import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { usePrefs, prefsStore, onboardingStore } from './settings'
+import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
+import { celebrateThenOpen } from './celebrate'
 import { TurnRail, type RailItem } from './TurnRail'
 import { WidthHandles, CONTENT_MIN, CONTENT_EDGE_BUDGET } from './WidthHandle'
 
@@ -18,7 +19,15 @@ const focusListeners: Array<() => void> = []
 const notify = () => { for (const l of focusListeners) { try { l() } catch (err) { console.error('[dsh-focus-overlay] focus listener failed', err) } } }
 export const focusStore = {
   get: () => focusOn,
-  set: (v: boolean) => { focusOn = !!v; notify() },
+  // Every entry path funnels through set(), so the false→true edge here is the
+  // one place the persisted open-counter can be bumped — a re-set while focus
+  // is already open never counts, an exit + re-entry always does.
+  set: (v: boolean) => {
+    const next = !!v
+    if (next && !focusOn) statsStore.bumpEntries()
+    focusOn = next
+    notify()
+  },
   subscribe: (l: () => void) => { focusListeners.push(l); return () => { const i = focusListeners.indexOf(l); if (i >= 0) focusListeners.splice(i, 1) } },
   // Capture the topmost visible user/steering row's chat anchor key so the
   // overlay can open at the same message (precise scroll preservation).
@@ -1104,6 +1113,45 @@ function FocusPrefsFields({ t }: { t: FocusTranslate }) {
   )
 }
 
+/** The settings card's bottom row: the persisted focus-entry counter, and —
+ *  once the count passes the threshold — a nudge to star the repo. */
+const REPO_URL = 'https://github.com/boogoo619/dsh-focus-overlay'
+
+function FocusEntryStat({ t }: { t: FocusTranslate }) {
+  const entries = useEntryCount()
+  const starred = useStarred()
+  const star = shouldShowStar(entries)
+  return (
+    <div className="fm-plugin-field fm-plugin-field-stat">
+      {/* One row (existing horizontal head class): counter text left, button right — the row keeps a single line's height. */}
+      <div className="fm-plugin-field-head">
+        <span className="fm-plugin-field-label">{t(star ? 'settings.entries.cheer' : 'settings.entries', { n: entries })}</span>
+        {star ? (starred ? (
+          // Already starred once (persisted): a plain jump, no celebration.
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { try { window.open(REPO_URL, '_blank', 'noopener') } catch { /* ignore */ } }}
+          >
+            {t('settings.entries.repo')}
+          </Button>
+        ) : (
+          // First time: the show runs first — celebrateThenOpen waits for the
+          // fireworks to end before the new tab takes focus — and the starred
+          // flag persists, so the card never asks for a star twice.
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => { statsStore.markStarred(); celebrateThenOpen(REPO_URL) }}
+          >
+            {t('settings.entries.star')}
+          </Button>
+        )) : null}
+      </div>
+    </div>
+  )
+}
+
 export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
   const [open, setOpen] = useState(false)
   const title = t('settings.label')
@@ -1125,6 +1173,7 @@ export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
       {open ? (
         <div className="fm-plugin-card-body">
           <FocusPrefsFields t={t} />
+          <FocusEntryStat t={t} />
         </div>
       ) : null}
     </li>

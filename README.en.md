@@ -25,6 +25,7 @@
 - **Auto-focus & reminders** — after a reply completes normally, optionally auto-enter focus at your question; while in focus, get a toast for a new reply or when the AI is waiting on you
 - **Width handles** — draggable strips beside the content column (official WidthHandle replica) that resize the reading column live and persist
 - **Hotkey F** — press `F` anywhere to enter focus mode instantly (toggleable in settings); typing in an input never triggers it
+- **Focus counter** — the settings card keeps a running total of your focus-mode entries; past 100 entries a GitHub Star nudge appears, is remembered after the first use, and then becomes a direct "open the project page" button
 
 These features are designed to give **small screens** more content space: tucking away the persistent header/composer and tool steps lets the conversation use as much of the screen as possible.
 
@@ -71,6 +72,7 @@ Click the line to expand that turn's full work detail (per-category one-line sum
 | Auto-enter focus | After a reply **completes normally**, auto-open focus at your question; abnormal endings (stop / error / max-tokens / interrupt) never fire — the judgement waits for a stable snapshot (streaming tail drained) first |
 | Reply / waiting reminders | In focus, a one-shot "New reply ready + View" toast on completion (auto-dismissed after 6s); a question/approval raises "AI is waiting for your reply + Answer", whose button expands the in-place answer card — auto-cleared once answered, never leaving focus |
 | F hotkey | Press `F` anywhere to enter focus mode instantly (default on, toggleable in settings); never fires while typing in an input or editable element, modifiers and auto-repeat ignored |
+| Focus counter | A row at the bottom of the settings card totals your focus-mode entries (auto-entries included), persisted to `localStorage`; past 100 entries a Star nudge appears — after the first use it is remembered and replaced by a direct "open the project page" button |
 | Esc peels layer by layer | Answer card → input bar → focus mode, one layer per press; Esc mid-IME-composition cancels the composition first |
 | i18n | Chinese / English copy registered under the `focus` namespace, follows the UI language |
 | Plugin configuration card | A collapsible card under "Settings → Plugins → Plugin configuration", preferences persisted to `localStorage`; the Node half registers the same settings namespace (schemastery schema) so the tab dispatches it |
