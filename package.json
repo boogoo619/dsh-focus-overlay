@@ -54,6 +54,7 @@
     "bundle"
   ],
   "devDependencies": {
+    "playwright-core": "^1.63.0",
     "tsdown": "0.22.2",
     "vitest": "^4.1.10"
   },
