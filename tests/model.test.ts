@@ -489,6 +489,8 @@ describe('hotkeyShouldEnter', () => {
 
 import {
   bottomForm,
+  shouldLiftOfficialComposer,
+  LIFT_MAX_WIDTH,
   bottomZoneAfter,
   BOTTOM_ENTER_PX,
   BOTTOM_EXIT_PX,
@@ -535,6 +537,27 @@ describe('bottomForm', () => {
 
   it('no draft, out of zone, unfocused: jump-to-bottom', () => {
     expect(bottomForm(base)).toBe('tobottom')
+  })
+})
+
+describe('shouldLiftOfficialComposer (borrow decision)', () => {
+  const base = { wanted: true, available: true, form: 'bar' as const }
+
+  it('lifts only when wanted, available, and the dock wants the bar', () => {
+    expect(shouldLiftOfficialComposer(base)).toBe(true)
+    expect(shouldLiftOfficialComposer({ ...base, wanted: false })).toBe(false)
+    expect(shouldLiftOfficialComposer({ ...base, available: false })).toBe(false)
+  })
+
+  it('never lifts for the non-bar dock forms (pill, tobottom, card, toast)', () => {
+    for (const form of ['pill', 'tobottom', 'card', 'toast'] as const) {
+      expect(shouldLiftOfficialComposer({ ...base, form })).toBe(false)
+    }
+  })
+
+  it('the .fm-lift CSS fallback interpolates the same width constant (no drift)', () => {
+    expect(LIFT_MAX_WIDTH).toBe(680)
+    expect(FOCUS_CSS).toContain(`var(--fm-lift-width,${LIFT_MAX_WIDTH}px)`)
   })
 })
 
