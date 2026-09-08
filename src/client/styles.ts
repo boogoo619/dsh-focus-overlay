@@ -1,4 +1,6 @@
 /** Package-owned stylesheet text (injected by the client apply, cleaned up on unload). */
+import { LIFT_MAX_WIDTH } from './model'
+
 export const FOCUS_CSS = `
 .fm-overlay{position:fixed;inset:0;z-index:2147483000;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
 .fm-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));flex:0 0 auto}
@@ -57,6 +59,31 @@ export const FOCUS_CSS = `
 .fm-reply-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:84px;z-index:2;display:flex;align-items:center;gap:10px;background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:100px;padding:8px 8px 8px 16px;box-shadow:var(--dsw-shadow-lv2,0 4px 16px rgba(0,0,0,.12));font-size:var(--dsh-content-font-size-secondary,13px)}
 .fm-reply-toast-dot{width:8px;height:8px;border-radius:999px;background:var(--dsw-static-deepseek-500,#4176e6);flex:0 0 auto}
 .fm-reply-toast-text{white-space:nowrap}
+/* ---- official-composer borrow: the lifted input bar ----
+   The main view's composer seat ([data-composer-seat], normally in the
+   conversation scroll flow UNDER this overlay) is re-anchored above the
+   overlay while the dock wants the bar form. Its ancestor chain has no
+   transform/filter/positioned-z traps (verified against the 0.1.2 build),
+   so position:fixed escapes to the viewport; the z-index sits just above
+   .fm-overlay's 2147483000 and below the int32 ceiling. The slash/@ menus
+   are descendants of the composer card, so they lift with it.
+   The seat itself must paint NOTHING: it is a layout box larger than the
+   composer card (hero variant stacks brand/workspace rows above it), so a
+   seat-level background or shadow would draw a translucent SQUARE behind
+   the rounded card. Only the card's own skin shows; the seat's empty area
+   is click-transparent so the reading surface beneath stays interactive. */
+.fm-lift{position:fixed!important;left:50%!important;right:auto!important;top:auto!important;bottom:20px!important;transform:translateX(-50%)!important;width:min(var(--fm-lift-width,${LIFT_MAX_WIDTH}px),calc(100vw - 48px))!important;max-width:calc(100vw - 48px)!important;z-index:2147483200!important;margin:0!important;box-shadow:none!important;background:0 0!important;pointer-events:none}
+/* The composer's dock row (queue/references rail) is hidden while lifted on
+   purpose: focus mode's dock is the plugin's own bottom-center region, and a
+   second rail inside the floating bar would duplicate it. Noteboard's canvas
+   borrow does the same. This drops that row's affordances IN FOCUS MODE only
+   (the main view keeps them); revisit if a focus-mode user needs them. */
+.fm-lift [data-slot="conversation.composer.dock"]{display:none!important}
+.fm-lift [data-composer-card]{pointer-events:auto}
+/* Cap the lifted editor's scroll area: a long multi-line draft must not grow
+   the floating card over half the reading surface (the main view allows the
+   full composer column height, which focus mode cannot afford). */
+.fm-lift [data-input-scroll]{max-height:180px!important;overscroll-behavior:contain}
 /* ---- bottom dock: bar / pill / jump-to-bottom / answer card ----
    Visual language mirrors the official composer cards token-for-token
    (ui-conversation InputBar/QuestionComposer, ui-user-questions

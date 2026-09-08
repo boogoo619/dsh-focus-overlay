@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, Component, type Reac
 import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore, onboardingStore } from './settings'
 import type { FocusTranslate } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 import { TurnRail, type RailItem } from './TurnRail'
 import { WidthHandles, CONTENT_MIN, CONTENT_EDGE_BUDGET } from './WidthHandle'
@@ -173,6 +173,22 @@ function AssistantItem(props: { blocks: any[]; loadImage: (a: any) => Promise<st
       {images.map((b, i) => <SessionImage key={i} attachment={b.attachment} loadImage={loadImage} />)}
     </div>
   )
+}
+
+/** The main view's composer seat — the DOM node the borrow path CSS-lifts
+ *  above the overlay. ONE selector shared by the probe, the lift, the focus
+ *  bridge, and the Esc peel, so they can never disagree on WHAT they lift. */
+function composerSeat(): HTMLElement | null {
+  return document.querySelector('[data-composer-seat]')
+}
+
+/** The official editor's editable surface inside the seat. The SAME node the
+ *  availability probe verifies and the pill→bar handoff focuses: probe
+ *  success therefore implies a focusable editor. If a dsh update moves either
+ *  surface, the probe fails → the dock degrades to the built-in textarea bar
+ *  — never to a silently un-focusable lifted composer. */
+function composerEditable(seat: HTMLElement | null): HTMLElement | null {
+  return seat ? seat.querySelector('[contenteditable="true"]') : null
 }
 
 function FocusContent(props: any) {
@@ -537,6 +553,11 @@ function FocusContent(props: any) {
       // Safari reports the composition-committing key with isComposing=false
       // + keyCode 229, so guard both (official composer precedent).
       if ((e as any).isComposing || (e as any).keyCode === 229) return
+      // The host composer's own popup (slash/@ menu) is open inside the
+      // lifted seat: let the host close IT first — swallowing the Esc here
+      // would collapse the bar out from under the open menu. The next Esc
+      // (menu gone) peels the bar as usual.
+      if (composerSeat()?.querySelector('[role="listbox"]')) return
       e.preventDefault()
       e.stopPropagation()
       if (cardOpen) { setCardOpen(false); return }
@@ -624,10 +645,16 @@ function FocusContent(props: any) {
     }
   }
   const hideBar = () => {
-    // Esc peel for an in-use bar: blurring the textarea IS the collapse (a
-    // blurred bar with a draft folds into the pill via bottomForm), and the
-    // explicit flag clear covers a focus that never landed.
-    try { taRef.current && taRef.current.blur() } catch { /* ignore */ }
+    // Esc peel for an in-use bar: blurring the input surface IS the collapse
+    // (a blurred bar with a draft folds into the pill via bottomForm), and the
+    // explicit flag clear covers a focus that never landed. Covers both input
+    // surfaces: the fallback textarea and the borrowed official composer.
+    try {
+      if (taRef.current) taRef.current.blur()
+      const seat = composerSeat()
+      const active = document.activeElement
+      if (seat && active && seat.contains(active)) (active as HTMLElement).blur()
+    } catch { /* ignore */ }
     setEngaged(false)
     setDockFocused(false)
   }
@@ -643,6 +670,112 @@ function FocusContent(props: any) {
   const errorLine = promptErr ? (promptErr.message || promptErr.code || 'send failed') : null
   const form = bottomForm({ pending, cardOpen, draftEmpty, inZone: zone, focused: dockFocused, engaged })
 
+  // ---- official-composer borrow (the preferred input bar) ----
+  // Instead of mirroring the shared draft into our own textarea (which must
+  // fight the host Lexical editor's synchronous focus-stealing commits — see
+  // the echo/caret machinery in Composer.tsx), the focus bar BORROWS the
+  // official composer itself: the main view's [data-composer-seat] element is
+  // CSS-lifted above the overlay (position:fixed + a z just above .fm-overlay)
+  // whenever the dock wants the bar form. It IS the official editing surface,
+  // so slash commands, @ references, chips, images and IME behave exactly as
+  // in the main view — one editor, no echo, no focus theft to undo. Probe
+  // first: when the seat or its editable surface is missing (older dsh, host
+  // DOM drift), borrowAvailable stays false and the dock falls back to the
+  // built-in textarea bar, which the e2e caret loop keeps correct.
+  const [borrowAvailable, setBorrowAvailable] = useState<boolean>(false)
+  const borrowWanted = prefs.borrow && !!currentId && snap !== null
+  const borrowedBar = shouldLiftOfficialComposer({ wanted: borrowWanted, available: borrowAvailable, form })
+  useEffect(() => {
+    if (!borrowWanted) { setBorrowAvailable(false); return }
+    let tries = 0
+    let timer: any = null
+    const probe = () => {
+      // Probe the SAME editable surface the pill→bar handoff focuses (see
+      // composerEditable) — never a parallel selector that can drift apart.
+      if (composerEditable(composerSeat())) { setBorrowAvailable(true); return }
+      if (++tries > 30) return // ~3s of retries, then stay on the fallback bar
+      timer = setTimeout(probe, 100)
+    }
+    probe()
+    return () => { if (timer) clearTimeout(timer) }
+  }, [borrowWanted])
+
+  // Focus bridge: focusin/focusout on the lifted seat drive the same
+  // dock-focused state the textarea's onFocus/onBlur does. A focus move that
+  // STAYS inside the seat (the slash/@ menus live in the composer card) is
+  // not a blur; anything else collapses the bar exactly like a textarea blur.
+  // Declared BEFORE the lift effect so its listeners are already attached
+  // when the handoff below focuses the editor inside the same effect flush.
+  useEffect(() => {
+    if (!borrowedBar) return
+    const seat = composerSeat()
+    if (!seat) return
+    const inSeat = (t: EventTarget | null): boolean => t instanceof Node && seat.contains(t)
+    const onFocusIn = (e: FocusEvent) => { if (inSeat(e.target)) onDockFocusChange(true) }
+    const onFocusOut = (e: FocusEvent) => {
+      if (inSeat(e.relatedTarget)) return
+      setTimeout(() => { if (!inSeat(document.activeElement)) onDockFocusChange(false) }, 0)
+    }
+    seat.addEventListener('focusin', onFocusIn)
+    seat.addEventListener('focusout', onFocusOut)
+    return () => {
+      seat.removeEventListener('focusin', onFocusIn)
+      seat.removeEventListener('focusout', onFocusOut)
+      onDockFocusChange(false)
+    }
+    // onDockFocusChange only touches setters — safe to hold from first render.
+  }, [borrowedBar])
+
+  // Lift/unlift the seat with the bar form. The cleanup ALWAYS strips the
+  // class — including the unmount-while-lifted path (focus mode exiting with
+  // the bar in use), where a leaked .fm-lift would keep the main composer
+  // floating over the normal view after the overlay is gone.
+  useEffect(() => {
+    const seat = composerSeat()
+    if (!seat) return
+    if (!borrowedBar) return
+    seat.style.setProperty('--fm-lift-width', `${Math.min(prefs.width, LIFT_MAX_WIDTH)}px`)
+    seat.classList.add('fm-lift')
+    // Pill → bar handoff: land the caret in the official editor surface and
+    // set the dock-focused flag SYNCHRONOUSLY from the DOM outcome — the
+    // focusin listener may not have observed this focus, and clearing
+    // `engaged` without focused set would collapse the bar back to the pill
+    // in the very next render. If the editable surface the probe verified is
+    // suddenly gone (selector drift mid-session), degrade to the built-in
+    // textarea bar — availability flips off, this effect's cleanup unlifts,
+    // and the handoff flag stays armed for the textarea focus path.
+    if (focusBarOnce.current) {
+      const editable = composerEditable(seat)
+      if (!editable) {
+        // Keep `engaged` and the handoff flag armed: the dock lands on the
+        // built-in textarea bar this render and the focus-once effect puts
+        // the caret there — the pill click still gets its bar, just ours.
+        setBorrowAvailable(false)
+        setDockFocused(false)
+      } else {
+        focusBarOnce.current = false
+        let landed = false
+        try { editable.focus(); landed = seat.contains(document.activeElement) } catch { /* ignore */ }
+        onDockFocusChange(landed)
+        setEngaged(false)
+      }
+    }
+    return () => {
+      seat.classList.remove('fm-lift')
+      seat.style.removeProperty('--fm-lift-width')
+    }
+  }, [borrowedBar, prefs.width])
+
+  // Sends made through the OFFICIAL composer (its own Enter/submit gesture)
+  // never pass through our send() — arm the send-reveal from the draft's
+  // non-empty → empty edge instead, so a row sent from focus mode still
+  // scrolls clear of the dock. Our own send() arming stays as-is.
+  const prevDraftRef = useRef(draftValue)
+  useEffect(() => {
+    if (prevDraftRef.current !== '' && draftValue === '' && zone) revealArmed.current = true
+    prevDraftRef.current = draftValue
+  }, [draftValue, zone])
+
   // The answer card lives only while its pending wait does — answered (even
   // from elsewhere) the region falls back to the normal forms. A pending
   // takeover also replaces the bar, whose textarea unmounts without blurring,
@@ -656,16 +789,18 @@ function FocusContent(props: any) {
     setEngaged(false)
   }, [pending, cardOpen])
 
-  // Expand-on-click focus: landing the caret straight in the textarea saves a
-  // click for the pill → bar path. `engaged` is the one-render handoff only —
-  // once focus lands (or fails), focused-or-not takes over.
+  // Expand-on-click focus (fallback textarea path; the borrowed composer's
+  // handoff lives in the lift effect above): landing the caret straight in
+  // the textarea saves a click for the pill → bar path. `engaged` is the
+  // one-render handoff only — once focus lands (or fails), focused-or-not
+  // takes over.
   useEffect(() => {
-    if (form === 'bar' && focusBarOnce.current) {
+    if (form === 'bar' && !borrowedBar && focusBarOnce.current) {
       focusBarOnce.current = false
       try { taRef.current && taRef.current.focus() } catch { /* ignore */ }
       setEngaged(false)
     }
-  }, [form])
+  }, [form, borrowedBar])
 
   let title = 'Focus Mode'
   if (currentId && listState && listState.byId && listState.byId[currentId]) {
@@ -870,6 +1005,7 @@ function FocusContent(props: any) {
             t={t}
             width={prefs.width}
             form={form}
+            borrowed={borrowedBar}
             wait={wait}
             onCardClose={() => setCardOpen(false)}
             draft={draftValue}
@@ -942,6 +1078,13 @@ function FocusPrefsFields({ t }: { t: FocusTranslate }) {
           <span className="fm-plugin-check-label">{t('settings.hotkey')}</span>
         </label>
         <p className="fm-plugin-field-hint">{t('settings.hotkey.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.borrow} onChange={(e) => prefsStore.update({ borrow: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.borrow')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.borrow.hint')}</p>
       </div>
       <div className="fm-plugin-field">
         <label className="fm-plugin-check">

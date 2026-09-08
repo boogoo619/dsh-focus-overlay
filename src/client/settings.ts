@@ -10,10 +10,15 @@ export interface FocusPrefs {
   autoFocus: boolean
   /** When enabled, pressing F anywhere enters focus mode (ignored while typing in an input). */
   hotkey: boolean
+  /** When enabled, the focus-mode input bar borrows the OFFICIAL main-view
+   *  composer (slash commands, @ references, chips — the whole official
+   *  editing surface) instead of the plugin's textarea; falls back to the
+   *  textarea when the official composer DOM is unavailable. */
+  borrow: boolean
 }
 
 const KEY = 'dsh-focus-overlay:prefs'
-const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760, autoFocus: false, hotkey: true }
+const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760, autoFocus: false, hotkey: true, borrow: true }
 
 function load(): FocusPrefs {
   try {

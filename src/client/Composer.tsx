@@ -426,6 +426,10 @@ export function FocusBottomDock(props: {
   t: FocusTranslate
   width: number
   form: 'card' | 'toast' | 'bar' | 'pill' | 'tobottom'
+  /** True while the OFFICIAL composer is CSS-lifted above the overlay as the
+   *  bar (see the borrow wiring in FocusView): the dock renders nothing for
+   *  the bar form then — the lifted seat IS the bar. */
+  borrowed: boolean
   wait: any
   onCardClose: () => void
   draft: string
@@ -439,8 +443,9 @@ export function FocusBottomDock(props: {
   onExpand: () => void
   onJumpBottom: () => void
 }) {
-  const { t, width, form, wait, onCardClose, draft, queueCount, occCount, errorLine, textareaRef, onFocusChange, onDraftChange, onSend, onExpand, onJumpBottom } = props
+  const { t, width, form, borrowed, wait, onCardClose, draft, queueCount, occCount, errorLine, textareaRef, onFocusChange, onDraftChange, onSend, onExpand, onJumpBottom } = props
   if (form === 'toast') return null // the overlay's waiting toast owns this moment
+  if (form === 'bar' && borrowed) return null // the lifted official composer owns the seat
   if (form === 'card') return <AnswerCard t={t} width={width} wait={wait} onClose={onCardClose} />
   if (form === 'bar') {
     return (

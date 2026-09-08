@@ -557,6 +557,21 @@ export function bottomForm(o: {
   return o.draftEmpty ? 'tobottom' : 'pill'
 }
 
+/** Max width (px) of the lifted official composer in focus mode. Shared by
+ *  the FocusView width calculation and the .fm-lift CSS fallback (styles.ts
+ *  interpolates it) so the two can never drift. Matches the built-in bar's
+ *  historical 680px cap. */
+export const LIFT_MAX_WIDTH = 680
+
+/** Whether the bottom dock should render the OFFICIAL composer (CSS-lifted
+ *  above the overlay) as its bar form: the user wants the borrow, the
+ *  composer DOM probed available, and the dock currently wants the bar.
+ *  Pure so the decision is unit-testable at the seam the lift effect
+ *  drives — the e2e loop exercises the DOM consequences. */
+export function shouldLiftOfficialComposer(o: { wanted: boolean; available: boolean; form: BottomForm }): boolean {
+  return o.wanted && o.available && o.form === 'bar'
+}
+
 /** Distance from the scroll end that counts as "at the bottom" (entering). */
 export const BOTTOM_ENTER_PX = 48
 /** Distance beyond which the reader has left the bottom zone (leaving). */
