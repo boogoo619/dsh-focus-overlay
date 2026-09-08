@@ -264,7 +264,7 @@ function InputBar(props: {
 }) {
   const { t, width, value, queueCount, occCount, errorLine, textareaRef, onFocusChange, onChange, onSend } = props
 
-  // ---- IME composition shield ----
+  // ---- IME composition shield + echo boundary ----
   // An IME composition needs UNBROKEN focus on this textarea. But every
   // shared-draft echo (onChange → inputFace.setDraft) makes the main composer's
   // hidden Lexical editor commit a discrete selection update that steals DOM
@@ -273,14 +273,39 @@ function InputBar(props: {
   // stay in a local override and are NOT echoed to the store; the whole final
   // text is flushed once on compositionend (or on send/blur safety flushes).
   const composingRef = useRef(false)
+  // True only while our own onChange echo is on the stack. The host's setDraft
+  // commits synchronously, so a blur arriving inside this window is that
+  // commit stealing focus — not the user leaving. See onBlur.
+  const echoingRef = useRef(false)
   const [pending, setPending] = useState<string | null>(null)
   const shown = pending ?? value
   const empty = shown.trim() === ''
 
-  const flush = (v: string | null) => {
-    if (v === null) return
+  // The single crossing into the shared-draft store. The echo rewrites the
+  // MAIN composer's Lexical editor (discrete commit ending in selectEnd()),
+  // which moves the DOM selection — and with it focus — off this textarea.
+  // So: capture the live selection BEFORE the echo (whatever the edit just
+  // left there), then if focus was indeed stolen, take it back and restore
+  // that EXACT selection. Restoring value.length instead silently relocated
+  // every mid-text edit to the end — one Backspace in the middle deleted the
+  // right char, then the caret landed at the end and ate the tail.
+  const echo = (el: HTMLTextAreaElement, next: string) => {
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    echoingRef.current = true
+    try {
+      onChange(next)
+    } finally {
+      echoingRef.current = false
+    }
+    if (document.activeElement !== el) {
+      el.focus()
+      el.setSelectionRange(start, end)
+    }
+  }
+  const flush = (el: HTMLTextAreaElement) => {
     setPending(null)
-    onChange(v)
+    echo(el, el.value)
   }
   const onCompositionStart = () => {
     composingRef.current = true
@@ -288,13 +313,12 @@ function InputBar(props: {
   }
   const onCompositionEnd = (e: ReactCompositionEvent<HTMLTextAreaElement>) => {
     composingRef.current = false
-    // Chrome fires the final input/onChange BEFORE compositionend; e.target
-    // carries the committed text either way.
-    flush(e.currentTarget.value)
-    // The flush echoes to the shared draft, whose Lexical commit steals focus
-    // again — the Enter/space that confirmed the candidate would otherwise end
-    // in a blur and fold the bar. Restore focus/caret right after the echo.
-    refocusAfterEcho(e.currentTarget)
+    // Chrome fires the final input/onChange BEFORE compositionend; the
+    // element carries the committed text either way. The flush's echo steals
+    // focus — the Enter/space that confirmed the candidate would otherwise
+    // blur the bar into the pill — and echo() restores focus plus the caret
+    // (at the composition point, mid-text included) right after.
+    flush(e.currentTarget)
   }
 
   // Enter sends (queue delivery, the official default busy-Enter behavior);
@@ -312,21 +336,6 @@ function InputBar(props: {
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`
   }
-  // The shared-draft path (onChange → inputFace.setDraft) rewrites the MAIN
-  // composer's Lexical editor. Its discrete commit also moves the DOM text
-  // selection into that hidden editor, which BLURS this textarea — so the very
-  // first keystroke folded the bar into the pill (blur = collapse via
-  // bottomForm). After each echo, restore the caret here if the editor stole
-  // it: blur→focus fire inside this one handler, so the dock's focused flag
-  // never observes the theft and the bar stays up while the user types.
-  // (Mid-IM-composition there is no echo at all — see the composition shield —
-  // so focus is never stolen while the candidate window is open.)
-  const refocusAfterEcho = (el: HTMLTextAreaElement) => {
-    if (document.activeElement === el) return
-    el.focus()
-    const end = el.value.length
-    el.setSelectionRange(end, end)
-  }
   // Re-fit on every value change, not just local edits: the shared draft can
   // arrive pre-filled (typed in the main composer before entering focus mode),
   // and the textarea must size to it without a keystroke.
@@ -338,16 +347,17 @@ function InputBar(props: {
     const el = e.target
     if (composingRef.current) {
       // Composing: shadow the value locally only — the store echo would kill
-      // the composition (see the shield note above).
+      // the composition (see the shield note above). No echo means no focus
+      // theft to undo; a theft from an external setDraft is handled the
+      // moment its blur arrives (see onBlur).
       setPending(el.value)
     } else {
       // Plain typing: echo through; the override must clear so later external
       // draft changes (seed, send-clear) are not shadowed by stale text.
       setPending(null)
-      onChange(el.value)
+      echo(el, el.value)
     }
     autoGrow(el)
-    refocusAfterEcho(el)
   }
 
   return (
@@ -372,13 +382,23 @@ function InputBar(props: {
           onKeyDown={onKeyDown}
           onFocus={() => onFocusChange(true)}
           onBlur={() => {
+            // A blur while our own echo is on the stack is the host's Lexical
+            // commit stealing focus: echo() restores focus and the caret the
+            // moment the echo returns (and re-firing onFocusChange(true) on
+            // the restored focus keeps the dock's flag untouched). Not a user
+            // action — never fold, never flush for it.
+            if (echoingRef.current) return
             if (composingRef.current) {
-              // Focus stolen mid-composition (echo timing raced the IME): the
-              // pending text must not be lost — flush it and take the focus
-              // back, or the theft would both eat the draft and fold the bar.
+              // Focus stolen mid-composition by an EXTERNAL setDraft (nothing
+              // of ours is echoing): the pending text must not be lost — flush
+              // the live DOM text and take the caret back, or the theft would
+              // both eat the draft and fold the bar out from under the IME.
               composingRef.current = false
-              flush(shown)
-              if (textareaRef.current) refocusAfterEcho(textareaRef.current)
+              const el = textareaRef.current
+              if (el) {
+                flush(el)
+                if (document.activeElement === el) return
+              }
             }
             onFocusChange(false)
           }}
