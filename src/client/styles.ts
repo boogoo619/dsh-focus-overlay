@@ -6,7 +6,7 @@ export const FOCUS_CSS = `
 .fm-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));flex:0 0 auto}
 .fm-title{font-size:calc(14px + var(--dsh-content-font-delta,0px));font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-body-wrap{position:relative;flex:1 1 auto;display:flex;min-height:0}
-.fm-body{flex:1 1 auto;min-width:0;overflow-y:auto;padding:28px 28px 110px}
+.fm-body{flex:1 1 auto;min-width:0;overflow-y:auto;padding:28px 28px 160px}
 .fm-inner{max-width:760px;margin:0 auto}
 .fm-msg{margin:0}
 .fm-user-msg{margin:0}

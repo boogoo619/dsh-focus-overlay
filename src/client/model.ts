@@ -591,11 +591,14 @@ export function bottomZoneAfter(prev: boolean, distance: number): boolean {
 }
 
 /** Bottom clearance a revealed row must keep inside the scrollport: the dock
- *  overlays roughly the last 110px of `.fm-body` (the padding-bottom reserves
+ *  overlays roughly the last 160px of `.fm-body` (the padding-bottom reserves
  *  exactly this much), so a row whose bottom sits above this line is fully
- *  readable with the dock in any of its collapsed forms. Keep in sync with
- *  `.fm-body`'s padding in styles.ts. */
-export const REVEAL_RESERVE_PX = 110
+ *  readable with the dock in any of its collapsed forms. Sized for the
+ *  BORROWED official composer — the tallest dock occupant: its hero-variant
+ *  card is 116px tall sitting 20px above the viewport bottom (136px), plus
+ *  shadow and breathing room; the compact variant and the collapsed pill
+ *  forms need less. Keep in sync with `.fm-body`'s padding in styles.ts. */
+export const REVEAL_RESERVE_PX = 160
 
 /**
  * Whether the overlay should scroll to uncover the just-sent prompt row. The
