@@ -55,7 +55,7 @@ Click the line to expand that turn's full work detail (per-category one-line sum
 | Feature | Description |
 | --- | --- |
 | Full-screen overlay | Registered into `shell.overlay` (additive, `replaceRisk: none`) — covers header / composer / sidebar; the thin top bar keeps only the session title and an exit button |
-| Official rendering primitives | Assistant text through official `MarkdownText` (GFM + code highlighting + TeX + code copy buttons + footnotes); user messages through `MessageText`; buttons, modals and icons are all official primitives |
+| Official rendering primitives | Assistant text through official `MarkdownText` (GFM + code highlighting + TeX + code copy buttons + footnotes); user messages through the official `projectUserText` projection; buttons, modals and icons are all official primitives |
 | Image resolution | Assistant `image` blocks resolve through `uiConversation.imageUrl` (the dsh 0.1.2+ session-authorized image cache), falling back to the legacy resolver on older dsh |
 | Tool-call folding | Follows the official "transcript view" preference (normal / compact); compact mode folds each turn's work part into a "N tool calls · M messages · K subagents" disclosure line ("Thought for a while" when nothing is countable), clickable to expand the full detail; steering messages always stay top-level, never buried; the last turn stays unfolded while streaming |
 | Categorized summaries | The expanded detail counts tools by family: commands / edits / searches / reads / directory listings / subagents / todos / goals / workflows / skills / questions / plans / background jobs / context injections |
