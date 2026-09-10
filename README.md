@@ -8,10 +8,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/npm/v/dsh-focus-overlay" alt="npm version">
-  <img src="https://img.shields.io/npm/dm/dsh-focus-overlay" alt="npm downloads (monthly)">
-  <img src="https://badgen.net/badge/license/MIT/green" alt="license">
-  <img src="https://badgen.net/badge/dsh/%3E%3D0.1.2-rc.1/blue" alt="dsh version">
+  <a href="https://www.npmjs.com/package/dsh-focus-overlay"><img src="https://img.shields.io/npm/v/dsh-focus-overlay" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/dsh-focus-overlay"><img src="https://img.shields.io/npm/dm/dsh-focus-overlay" alt="npm downloads (monthly)"></a>
+  <a href="https://github.com/boogoo619/dsh-focus-overlay/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license: MIT"></a>
+  <a href="https://github.com/boogoo619/dsh-focus-overlay/blob/master/package.json"><img src="https://img.shields.io/badge/dsh-%3E%3D0.1.2--rc.1-blue" alt="dsh version"></a>
+  <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://img.shields.io/badge/awesome-dsh--plugin-orange" alt="awesome dsh plugin"></a>
 </p>
 
 ## 功能
