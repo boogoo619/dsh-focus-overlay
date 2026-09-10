@@ -124,7 +124,10 @@ export const FOCUS_CSS = `
 .fm-card-body{overscroll-behavior:contain;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow-y:auto;padding-bottom:8px;font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}
 .fm-card-q{display:flex;flex-direction:column}
 .fm-card-q-text{margin:0 2px 8px;padding:0 22px;white-space:pre-wrap;word-break:break-word;font-size:calc(var(--dsh-content-font-size,14px) + 2px);font-weight:500;line-height:calc(22px + var(--dsh-content-font-delta,0px))}
-.fm-card-detail{color:var(--dsw-alias-label-secondary,#888);margin:0 2px 8px;padding:0 22px;font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}
+.fm-card-detail{color:var(--dsw-alias-label-secondary,#888);margin:0 2px 8px;padding:0 22px;font:var(--dsw-font-markdown-base,400 var(--dsh-content-font-size,14px)/calc(24px + var(--dsh-content-font-delta,0px)) var(--dsw-font-family,sans-serif))}
+.fm-card-detail>*:first-child{margin-top:0}
+.fm-card-detail>*:last-child{margin-bottom:0}
+.fm-card-detail pre{overflow-x:auto}
 .fm-card-opts{display:flex;flex-direction:column;gap:1px;margin:8px 0 0;padding:4px 12px}
 .fm-opt{width:100%;min-height:40px;color:inherit;text-align:left;cursor:pointer;background:0 0;border:1px solid #0000;border-radius:12px;flex-shrink:0;display:flex;align-items:flex-start;gap:8px;padding:8px 12px 8px 8px;transition:background-color .12s,border-color .12s;font:inherit}
 .fm-opt:hover:not(:disabled),.fm-opt-on{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}

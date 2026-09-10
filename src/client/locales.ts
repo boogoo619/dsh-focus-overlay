@@ -41,6 +41,7 @@ export const zh = {
   'answer.open': '去回答',
   'answer.title': '等待你的回答',
   'answer.approvalTitle': '请求审批',
+  'answer.planTitle': '计划待审',
   'answer.submit': '提交回答',
   'answer.close': '收起',
   'answer.custom': '其他答案（可选）',
@@ -127,6 +128,7 @@ export const en = {
   'answer.open': 'Answer',
   'answer.title': 'Waiting for your answer',
   'answer.approvalTitle': 'Approval requested',
+  'answer.planTitle': 'Plan review',
   'answer.submit': 'Submit answer',
   'answer.close': 'Collapse',
   'answer.custom': 'Other (optional)',
@@ -174,3 +176,16 @@ export const en = {
 
 export type FocusKey = keyof typeof zh
 export type FocusTranslate = (key: string, params?: Record<string, unknown>) => string
+
+/** Labels the official MarkdownText requires for its code-block copy buttons
+ *  and footnotes section — mirrors the official `markdownLabels(t)` shape.
+ *  Lives here (not FocusView) so both the transcript items and the answer
+ *  card share it without an import cycle (FocusView imports Composer).
+ *  Without it the renderer throws `Cannot read properties of undefined
+ *  (reading 'code')` on the first fenced code block. */
+export function markdownLabels(t: FocusTranslate): any {
+  return {
+    code: { copyLabel: t('markdown.code.copy'), copiedLabel: t('markdown.code.copied') },
+    footnotes: t('markdown.footnotes'),
+  }
+}

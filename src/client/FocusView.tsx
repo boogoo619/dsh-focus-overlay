@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, Component, type Reac
 import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
+import { markdownLabels } from './locales'
 import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 import { celebrateThenOpen } from './celebrate'
@@ -161,16 +162,9 @@ function SessionImage({ attachment, loadImage }: { attachment: any; loadImage: (
   return <img className="fm-image" src={src} alt="" />
 }
 
-/** Labels the official MarkdownText requires for its code-block copy buttons
- *  and footnotes section — mirrors the official `markdownLabels(t)` shape.
- *  Without it the renderer throws `Cannot read properties of undefined
- *  (reading 'code')` on the first fenced code block. */
-export function markdownLabels(t: FocusTranslate): any {
-  return {
-    code: { copyLabel: t('markdown.code.copy'), copiedLabel: t('markdown.code.copied') },
-    footnotes: t('markdown.footnotes'),
-  }
-}
+/** Re-exported from ./locales (moved there so the Composer's answer card can
+ *  share it without FocusView ↔ Composer importing each other). */
+export { markdownLabels }
 
 function AssistantItem(props: { blocks: any[]; loadImage: (a: any) => Promise<string>; fileMentions: any; labels: any }) {
   const { blocks, loadImage, fileMentions, labels } = props

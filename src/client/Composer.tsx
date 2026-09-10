@@ -22,8 +22,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MutableRefObject, ChangeEvent as ReactChangeEvent, CompositionEvent as ReactCompositionEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Button, IconCheckOutline14, IconChevronDownOutline14, IconEditOutline16, IconSendOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { FocusTranslate } from './locales'
+import { Button, IconCheckOutline14, IconChevronDownOutline14, IconEditOutline16, IconSendOutline14, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { markdownLabels, type FocusTranslate } from './locales'
 import { allAnswered, encodeAnswer, parseRecommendedLabel, type AnswerDraft } from './model'
 
 // ---- the official per-session input machine (shared-draft path) ----
@@ -106,6 +106,11 @@ function AnswerCard(props: {
   const isApproval = wait.kind === 'approval'
   const isQuestion = !isApproval
   const questions: any[] = isQuestion && Array.isArray(wait.questions) ? wait.questions : []
+  // Presentation intent only: a plan-review question carries the plan as its
+  // `detail` (markdown) and is one decision over that plan — the official GUI
+  // shows it as a "plan review" card. Answer encoding is unchanged.
+  const isPlanReview = questions.some((q) => q && q.intent && q.intent.kind === 'plan-review')
+  const mdLabels = useMemo(() => markdownLabels(t), [t])
   const [drafts, setDrafts] = useState<Record<string, AnswerDraft>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -167,7 +172,7 @@ function AnswerCard(props: {
         <div className="fm-card-head">
           <div className="fm-card-heading">
             <p className="fm-card-eyebrow">{t('reply.waiting')}</p>
-            <h3 className="fm-card-title">{t('answer.title')}</h3>
+            <h3 className="fm-card-title">{isPlanReview ? t('answer.planTitle') : t('answer.title')}</h3>
           </div>
           <button type="button" className="fm-card-close" title={t('answer.close')} aria-label={t('answer.close')} onClick={onClose}>
             <IconChevronDownOutline14 />
@@ -190,7 +195,15 @@ function AnswerCard(props: {
               <div className="fm-card-q-text">
                 {questions.length > 1 ? `${i + 1}. ` : ''}{q.question}
               </div>
-              {q.detail ? <div className="fm-card-detail">{q.detail}</div> : null}
+              {q.detail ? (
+                // Official semantics: `detail` is supporting detail kept out of
+                // option labels — for a plan-review it is the plan markdown
+                // itself, so it MUST go through the official MarkdownText
+                // (same primitive the transcript uses), never a raw text node.
+                <div className="fm-card-detail">
+                  <MarkdownText text={q.detail} labels={mdLabels} />
+                </div>
+              ) : null}
               {q.options && q.options.length ? (
                 <div className="fm-card-opts" role={q.multiSelect ? 'group' : 'radiogroup'}>
                   {q.options.map((o: any, oi: number) => (
