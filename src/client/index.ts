@@ -4,7 +4,7 @@
  * action row, and a collapsible plugin card in the Plugins settings tab
  * (`settings.plugin.item`). Rendering reuses the official client UI primitives
  * module (`@deepseek-ai/dsh-client-ui-primitives` runtime id) — Markdown /
- * MessageText / Tooltip / Button — plus the conversation service's composer
+ * projectUserText / Tooltip / Button — plus the conversation service's composer
  * registry and the uiSession pending-interaction service (dsh 0.1.2).
  */
 import { createElement } from 'react'

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Component, type ReactNode } from 'react'
-import { MarkdownText, MessageText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, projectUserText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
 import { markdownLabels } from './locales'
@@ -68,6 +68,20 @@ function useDonePing(): number {
   const [v, setV] = useState<number>(focusStore.getDonePing)
   useEffect(() => focusStore.subscribe(() => setV(focusStore.getDonePing())), [])
   return v
+}
+
+/** Body of a sent user message / steering row.
+ *
+ *  dsh 0.1.3-alpha.2 removed the `MessageText` component from the primitives
+ *  module in favour of the `projectUserText` display projection (which has
+ *  existed since 0.1.2 and is still exported by 0.1.5). Importing the removed
+ *  name made it `undefined`, so the overlay threw React #130 the moment it
+ *  rendered a session containing a user message — the "toggle does nothing"
+ *  symptom. `projectUserText` returns inline plain runs plus `@session` /
+ *  `/skill` chips; `.fm-user` still supplies the bubble chrome and
+ *  `white-space: pre-wrap`, so the text keeps its shape. */
+function UserText({ text }: { text: string }) {
+  return <>{projectUserText(text, [])}</>
 }
 
 // ---- scroll/anchor ledger (module scope; refs populate while the overlay is mounted) ----
@@ -855,14 +869,14 @@ function FocusContent(props: any) {
       if (it.kind === 'user') {
         return (
           <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (registerAnchor) { if (el) anchors[key] = el; else delete anchors[key] } }}>
-            <div className="fm-user"><MessageText text={it.text} /></div>
+            <div className="fm-user"><UserText text={it.text} /></div>
           </div>
         )
       }
       if (it.kind === 'steering') {
         return (
           <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (registerAnchor) { if (el) anchors[key] = el; else delete anchors[key] } }}>
-            <div className="fm-user fm-steering"><MessageText text={it.text} /></div>
+            <div className="fm-user fm-steering"><UserText text={it.text} /></div>
           </div>
         )
       }
