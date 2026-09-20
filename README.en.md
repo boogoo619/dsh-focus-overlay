@@ -20,7 +20,8 @@
 ## Features
 
 - **Full-screen reading** — an overlay registered additively into `shell.overlay`, covering header / composer / sidebars, giving all vertical space to the conversation
-- **Folded tool calls** — an assistant turn collapses into one official TurnProcess-style count line, clickable to expand the full work detail
+- **Keep what you want** — four switches decide, one by one, whether the sidebar, the top bar (session title + 对话/轨迹 tabs), the bottom status bar (turns / tok/s / cache hit / cost) and the work process are hidden: keep the sidebar and read a long reply next to your session list
+- **Folded tool calls** — an assistant turn collapses into one official TurnProcess-style count line, clickable to expand the full work detail; turning "Hide the work process" off shows every step instead
 - **Turn navbar** — a right-side rail 1:1 replicating the official TurnNavigator: one mark per turn, hover previews, click to jump
 - **Bottom dock** — a compact input bar appears at the live edge and shares the main composer's draft; AI questions and approvals expand into an in-place answer card, so you never leave focus to reply
 - **Auto-focus & reminders** — after a reply completes normally, optionally auto-enter focus at your question; while in focus, get a toast for a new reply or when the AI is waiting on you
@@ -56,6 +57,7 @@ Click the line to expand that turn's full work detail (per-category one-line sum
 | Feature | Description |
 | --- | --- |
 | Full-screen overlay | Registered into `shell.overlay` (additive, `replaceRisk: none`) — covers header / composer / sidebar; the thin top bar keeps only the session title and an exit button |
+| Keep-what-you-want switches | Four "hide" switches (sidebar / top bar / bottom status bar / work process), all ON by default = the original all-hidden view. Clearing one keeps that piece: the sidebar and the two bars are revealed by **insetting the overlay** — the live rectangles of the shipped chrome are measured into the `--fm-inset-*` / `--fm-status-h` CSS variables — and the bottom status bar rides up with the composer while the input bar is up, or pins itself to the bottom of the window in every other dock form |
 | Official rendering primitives | Assistant text through official `MarkdownText` (GFM + code highlighting + TeX + code copy buttons + footnotes); user messages through the official `projectUserText` projection; buttons, modals and icons are all official primitives |
 | Image resolution | Assistant `image` blocks resolve through `uiConversation.imageUrl` (the dsh 0.1.2+ session-authorized image cache), falling back to the legacy resolver on older dsh |
 | Tool-call folding | Follows the official "transcript view" preference (normal / compact); compact mode folds each turn's work part into a "N tool calls · M messages · K subagents" disclosure line ("Thought for a while" when nothing is countable), clickable to expand the full detail; steering messages always stay top-level, never buried; the last turn stays unfolded while streaming |
@@ -66,6 +68,7 @@ Click the line to expand that turn's full work detail (per-category one-line sum
 | Width handles (WidthHandle) | A drag strip on each side of the column, 1:1 replica of the official WidthHandle: symmetric on both sides (2× outward), rAF-throttled live drag, pointer glow indicator, commit-on-release persisted; 640px floor + 88px edge budget per side |
 | Back to latest | A centered "↓" floating button when you scroll away from the bottom with no draft |
 | Bottom dock | Five mutually exclusive forms decided by one pure selector: answer card / waiting toast / input bar / collapsed pill / jump-to-bottom; the compact bar appears when you reach the bottom (48px hysteresis band) |
+| The composer never covers the text | The reading surface ENDS above the bottom dock (and above the borrowed official composer): the plugin measures what they currently occupy into `--fm-bottom-reserve` and the transcript scrollport shrinks by it — a growing bar, an open todo panel or an answer card pushes the reading area up instead of covering the conversation (at least 160px of transcript is always left) |
 | Shared draft | The bar wires the official per-session input machine (`conversation.input.for`): text typed before entering focus is already here, and text typed here is still in the main composer after leaving; on older dsh without the input service it degrades to a plugin-local draft |
 | Input bar details | `Enter` sends (queue delivery — queued while the AI runs, with a "Queued N" badge), `Shift+Enter` newlines, IME-composition safe, auto-growing; send failures surface an error line; a draft containing references/commands warns to edit outside focus mode; with a draft, clicking the conversation folds the bar into a blue-dot pill, one click back with the caret in place |
 | Reveal-on-send | After sending a long message from the live edge, the view scrolls up just enough to fully reveal the row — never hidden behind the dock; sending from up in history never scrolls |
@@ -140,8 +143,15 @@ In the sidebar "Settings → Plugins → Plugin configuration", expand the "Focu
 | --- | --- |
 | Auto-enter focus mode when the AI finishes a reply | On a normal completion: auto-open at your question when closed, or a "New reply ready" toast when open (default off) |
 | Press F to enter focus mode | Press `F` anywhere to enter focus mode instantly; never fires while typing in an input (default on) |
+| Use the official composer | Focus mode borrows the main view's official composer (`/` commands, `@` references included); off uses the built-in input bar (default on) |
 | Sync the current reading position when entering focus mode | Open at the message you're reading; off opens at your most recent question (default on) |
 | Show right-side turn navbar | One rail mark per user message (turn) — hover to preview, click to jump (default on) |
+| Hide the sidebar | Cover the session list while in focus mode; off starts the overlay at the sidebar's right edge and keeps the sidebar visible and usable (default on) |
+| Hide the top bar | Cover the session header and its 对话/轨迹 tabs; off keeps the header in place and drops the overlay's own topbar — the 专注 button in that header then exits focus mode (default on) |
+| Hide the bottom status bar | Cover the stats row under the composer (turns / steps / tok/s / cache hit / cost); off keeps that row visible — under the input bar while it is up, otherwise pinned to the bottom of the window (default on) |
+| Hide the work process | Fold each turn's tool calls, edits and searches into one "N tool calls · M messages" line; off shows every step (default on) |
+
+> All four "hide" switches default to ON — that is the plugin's original all-hidden focus view. Clear the one you want to keep.
 
 > **Text width** is not in the settings card: drag the handles beside the content column while in focus mode to resize it live; the value persists on release (default 760px, minimum 640px).
 

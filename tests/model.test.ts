@@ -23,6 +23,13 @@ import {
   readStarred,
   shouldShowStar,
   STAR_THRESHOLD,
+  transcriptModeFor,
+  chromeInsets,
+  shouldLiftStatusRow,
+  bottomReserve,
+  DOCK_BOTTOM_PX,
+  LIFT_BOTTOM_PX,
+  READING_FLOOR_PX,
 } from '../src/client/model'
 
 // Minimal translate stub: renders the key plus the interpolated `n` so tests
@@ -610,13 +617,22 @@ describe('shouldRevealSentPrompt (send reveal decision)', () => {
     expect(shouldRevealSentPrompt({ ...base, nextSeq: null })).toBe(false)
   })
 
-  it('REVEAL_RESERVE_PX stays in sync with .fm-body bottom padding (dock clearance)', () => {
-    // The reserve is only correct as long as it matches the scrollport's own
-    // bottom padding — the layout's contract for "clear of the dock". If this
-    // fails, update both together.
+  it('REVEAL_RESERVE_PX stays in sync with .fm-body bottom padding (trailing gap)', () => {
+    // The scrollport ends above the composer (see bottomReserve), so this is
+    // ordinary trailing breathing room at the end of the content; the JS
+    // reveal and the stylesheet must still agree on it. If this fails, update
+    // both together.
     const block = FOCUS_CSS.match(/\.fm-body\{[^}]*\}/)?.[0] ?? ''
     const pad = block.match(/padding:([^;}]+)/)?.[1] ?? ''
     expect(parseInt(pad.trim().split(/\s+/)[2], 10)).toBe(REVEAL_RESERVE_PX)
+  })
+
+  it('the bottom offsets the plugin measures match the stylesheet', () => {
+    // FocusView measures the dock / lifted composer with these offsets; the CSS
+    // places them with them. A silent drift here would leave a sliver of text
+    // under the composer (or a gap above it).
+    expect(FOCUS_CSS).toContain(`.fm-dock{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(${DOCK_BOTTOM_PX}px + var(--fm-status-h,0px))`)
+    expect(FOCUS_CSS).toContain(`.fm-lift{position:fixed!important;left:calc(50% + var(--fm-inset-left,0px) / 2)!important;right:auto!important;top:auto!important;bottom:${LIFT_BOTTOM_PX}px!important`)
   })
 })
 
@@ -857,5 +873,81 @@ describe('readStarred', () => {
     expect(readStarred('{}')).toBe(false)
     expect(readStarred(JSON.stringify({ starred: 'yes' }))).toBe(false)
     expect(readStarred(JSON.stringify({ starred: 1 }))).toBe(false)
+  })
+})
+
+describe('transcriptModeFor', () => {
+  it('follows the official 对话显示 preference while the work process is hidden', () => {
+    expect(transcriptModeFor(true, 'compact')).toBe('compact')
+    expect(transcriptModeFor(true, 'normal')).toBe('normal')
+  })
+
+  it('forces the official normal form when the work process is shown', () => {
+    expect(transcriptModeFor(false, 'compact')).toBe('normal')
+    expect(transcriptModeFor(false, 'normal')).toBe('normal')
+  })
+})
+
+describe('chromeInsets', () => {
+  const base = { hideSidebar: true, hideTopBar: true, sidebarWidth: 280, headerHeight: 76 }
+
+  it('reserves nothing while the shipped chrome is hidden', () => {
+    expect(chromeInsets(base)).toEqual({ top: 0, left: 0 })
+  })
+
+  it('reserves the measured rectangle of each kept piece', () => {
+    expect(chromeInsets({ ...base, hideSidebar: false })).toEqual({ top: 0, left: 280 })
+    expect(chromeInsets({ ...base, hideTopBar: false })).toEqual({ top: 76, left: 0 })
+    expect(chromeInsets({ ...base, hideSidebar: false, hideTopBar: false })).toEqual({ top: 76, left: 280 })
+  })
+
+  it('rounds the measurement and treats missing/degenerate rectangles as covered', () => {
+    expect(chromeInsets({ ...base, hideSidebar: false, hideTopBar: false, sidebarWidth: 279.6, headerHeight: 75.4 })).toEqual({ top: 75, left: 280 })
+    expect(chromeInsets({ ...base, hideSidebar: false, hideTopBar: false, sidebarWidth: 0, headerHeight: 0 })).toEqual({ top: 0, left: 0 })
+    expect(chromeInsets({ ...base, hideSidebar: false, hideTopBar: false, sidebarWidth: -5, headerHeight: NaN })).toEqual({ top: 0, left: 0 })
+  })
+})
+
+describe('shouldLiftStatusRow', () => {
+  it('lifts the row on its own only when it is kept and the seat is not lifted', () => {
+    expect(shouldLiftStatusRow({ keepStatus: true, seatLifted: false })).toBe(true)
+    expect(shouldLiftStatusRow({ keepStatus: true, seatLifted: true })).toBe(false)
+    expect(shouldLiftStatusRow({ keepStatus: false, seatLifted: false })).toBe(false)
+    expect(shouldLiftStatusRow({ keepStatus: false, seatLifted: true })).toBe(false)
+  })
+})
+
+describe('bottomReserve', () => {
+  const base = { dock: 0, seat: 0, available: 900 }
+
+  it('reserves nothing when neither surface is on screen', () => {
+    expect(bottomReserve(base)).toBe(0)
+  })
+
+  it('reserves the taller of the two surfaces (only one is ever shown)', () => {
+    expect(bottomReserve({ ...base, dock: 90 })).toBe(90)
+    expect(bottomReserve({ ...base, seat: 130 })).toBe(130)
+    expect(bottomReserve({ ...base, dock: 90, seat: 130 })).toBe(130)
+    expect(bottomReserve({ ...base, dock: 200, seat: 130 })).toBe(200)
+  })
+
+  it('keeps a reading floor under a very tall surface', () => {
+    expect(bottomReserve({ ...base, dock: 900 })).toBe(900 - READING_FLOOR_PX)
+    expect(bottomReserve({ ...base, dock: 5000, available: 900 })).toBe(900 - READING_FLOOR_PX)
+  })
+
+  it('rounds and treats broken measurements as no surface', () => {
+    expect(bottomReserve({ ...base, dock: 90.4 })).toBe(90)
+    expect(bottomReserve({ ...base, dock: Number.NaN, seat: Number.NaN })).toBe(0)
+    expect(bottomReserve({ ...base, dock: -20 })).toBe(0)
+    // An unmeasurable sheet (before first layout) cannot cap the reserve.
+    expect(bottomReserve({ dock: 120, seat: 0, available: 0 })).toBe(120)
+    expect(bottomReserve({ dock: 120, seat: 0, available: Number.NaN })).toBe(120)
+  })
+
+  it('exposes the offsets the measurement adds to the CSS placement', () => {
+    expect(DOCK_BOTTOM_PX).toBe(18)
+    expect(LIFT_BOTTOM_PX).toBe(20)
+    expect(READING_FLOOR_PX).toBe(160)
   })
 })

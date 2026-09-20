@@ -26,7 +26,10 @@ const CONTENT_MIN = 640
 const CONTENT_EDGE_BUDGET = 176
 
 const HANDLE_CSS = `
-.fm-width-handles{position:absolute;top:0;bottom:0;left:0;right:0;pointer-events:none}
+/* The handle strips end where the reading surface does (--fm-bottom-reserve is
+   the band the bottom dock / lifted composer occupies), so their hover glow
+   never bleeds into the composer. */
+.fm-width-handles{position:absolute;top:0;bottom:var(--fm-bottom-reserve,0px);left:0;right:0;pointer-events:none}
 .fm-width-handle{z-index:8;width:min(40px,calc((100% - var(--fm-content-width,748px)) / 2 - 24px - 24px));cursor:col-resize;pointer-events:auto;position:absolute;top:0;bottom:0}
 .fm-width-handle[data-side=left]{right:calc(50% + var(--fm-content-width,748px) / 2 + 24px)}
 .fm-width-handle[data-side=right]{left:calc(50% + var(--fm-content-width,748px) / 2 + 24px)}

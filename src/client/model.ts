@@ -610,6 +610,88 @@ export function shouldLiftOfficialComposer(o: { wanted: boolean; available: bool
   return o.wanted && o.available && o.form === 'bar'
 }
 
+/** The transcript form the overlay renders for the "隐藏工作过程" preference.
+ *  ON keeps the official fold — `compact`, the shipped one-line counts
+ *  summary, which itself follows the official 对话显示 preference; OFF forces
+ *  the official `normal` form, so every step of the work is rendered. */
+export function transcriptModeFor(hideProcess: boolean, official: 'normal' | 'compact'): 'normal' | 'compact' {
+  return hideProcess ? official : 'normal'
+}
+
+/** Rects (CSS px) the overlay must leave uncovered because the user asked to
+ *  keep that piece of chrome visible. */
+export interface ChromeInsets {
+  top: number
+  left: number
+}
+
+/**
+ * Insets for the chrome the user chose NOT to hide. The overlay is a fixed
+ * full-viewport sheet, so "not hiding" the sidebar / session header means
+ * insetting the sheet by that chrome's measured rectangle.
+ *
+ * Anything unmeasurable — no frame yet, a blank session whose header is
+ * display:none, a sidebar that is not mounted — resolves to 0, which keeps the
+ * overlay covering that edge: the safe direction (nothing new leaks through).
+ */
+export function chromeInsets(o: {
+  hideSidebar: boolean
+  hideTopBar: boolean
+  sidebarWidth: number
+  headerHeight: number
+}): ChromeInsets {
+  const px = (v: number) => (Number.isFinite(v) && v > 0 ? Math.round(v) : 0)
+  return {
+    left: o.hideSidebar ? 0 : px(o.sidebarWidth),
+    top: o.hideTopBar ? 0 : px(o.headerHeight),
+  }
+}
+
+/**
+ * Whether the composer's stats row has to be lifted on its own. The official
+ * composer seat is only CSS-lifted while the bottom dock wants the BAR form, so
+ * in every other form the row would stay buried under the overlay; it then
+ * travels alone (the plugin's `.fm-status-lift`) to the bottom of the viewport.
+ */
+export function shouldLiftStatusRow(o: { keepStatus: boolean; seatLifted: boolean }): boolean {
+  return o.keepStatus && !o.seatLifted
+}
+
+/** Distance from the sheet's bottom edge to the bottom dock's own box (.fm-dock). */
+export const DOCK_BOTTOM_PX = 18
+/** Distance from the sheet's bottom edge to the lifted composer seat (.fm-lift). */
+export const LIFT_BOTTOM_PX = 20
+/** Reading surface the bottom reserve may never eat into — a very tall composer
+ *  (answer card, todo panel, long multi-line draft) stops shrinking the
+ *  transcript at this height instead of collapsing it to nothing. */
+export const READING_FLOOR_PX = 160
+
+/** Distance from the sheet's bottom edge to the top of the bottom surface. */
+export interface BottomBands {
+  /** The plugin's own dock, offset included; 0 when it renders nothing. */
+  dock: number
+  /** The CSS-lifted official composer, offset included; 0 when it is not lifted. */
+  seat: number
+}
+
+/**
+ * How much of the sheet's bottom the reading surface must keep clear.
+ *
+ * The transcript scrollport ends where the bottom surface begins, so the
+ * composer is never painted over the text: the dock / lifted composer sits in
+ * its own reserved band and the content above it scrolls normally — the normal
+ * view's arrangement, where the composer is part of the layout rather than a
+ * floating layer. The reservation is the taller of the two surfaces (only one
+ * of them is ever on screen), capped so a huge surface still leaves
+ * {@link READING_FLOOR_PX} of transcript.
+ */
+export function bottomReserve(o: BottomBands & { available: number }): number {
+  const want = Math.max(Number.isFinite(o.dock) ? o.dock : 0, Number.isFinite(o.seat) ? o.seat : 0)
+  if (!(want > 0)) return 0
+  const cap = Number.isFinite(o.available) && o.available > 0 ? Math.max(0, o.available - READING_FLOOR_PX) : want
+  return Math.round(Math.min(want, cap))
+}
+
 /** Distance from the scroll end that counts as "at the bottom" (entering). */
 export const BOTTOM_ENTER_PX = 48
 /** Distance beyond which the reader has left the bottom zone (leaving). */
@@ -628,15 +710,12 @@ export function bottomZoneAfter(prev: boolean, distance: number): boolean {
   return prev
 }
 
-/** Bottom clearance a revealed row must keep inside the scrollport: the dock
- *  overlays roughly the last 160px of `.fm-body` (the padding-bottom reserves
- *  exactly this much), so a row whose bottom sits above this line is fully
- *  readable with the dock in any of its collapsed forms. Sized for the
- *  BORROWED official composer — the tallest dock occupant: its hero-variant
- *  card is 116px tall sitting 20px above the viewport bottom (136px), plus
- *  shadow and breathing room; the compact variant and the collapsed pill
- *  forms need less. Keep in sync with `.fm-body`'s padding in styles.ts. */
-export const REVEAL_RESERVE_PX = 160
+/** Trailing gap a revealed row keeps inside the scrollport. The transcript
+ *  scrollport now ENDS above the bottom surface (`bottomReserve` shrinks it), so
+ *  a revealed row no longer has to clear a floating dock — this is ordinary
+ *  reading breathing room at the end of the content. Keep in sync with
+ *  `.fm-body`'s padding-bottom in styles.ts. */
+export const REVEAL_RESERVE_PX = 24
 
 /**
  * Whether the overlay should scroll to uncover the just-sent prompt row. The
