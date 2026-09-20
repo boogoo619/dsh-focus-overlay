@@ -3,7 +3,7 @@ import { MarkdownText, projectUserText, Button, Modal, IconChevronDownOutline14 
 import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
 import { markdownLabels } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar, chromeInsets, shouldLiftStatusRow, transcriptModeFor, bottomReserve, pinnedDistanceOnReserveChange, DOCK_BOTTOM_PX, LIFT_BOTTOM_PX, type ChromeInsets } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 import { celebrateThenOpen } from './celebrate'
 import { TurnRail, type RailItem } from './TurnRail'
@@ -208,6 +208,57 @@ function composerEditable(seat: HTMLElement | null): HTMLElement | null {
   return seat ? seat.querySelector('[contenteditable="true"]') : null
 }
 
+/** The composer's dock row — the slot the official StatsPills (turns / steps ·
+ *  tok/s · cache hit · cost) registers into. The SAME selector the stylesheet
+ *  scopes the two status-bar lift rules with. */
+function statusDock(): HTMLElement | null {
+  return document.querySelector('[data-slot="conversation.composer.dock"]')
+}
+
+/** The shell frame (the three-column grid): the overlay layer's parent, so the
+ *  lookup does not depend on any per-build CSS-module hash. */
+function shellFrame(): HTMLElement | null {
+  const layer = document.querySelector('[data-shell-overlay]')
+  return layer ? (layer.parentElement as HTMLElement | null) : null
+}
+
+/** The official session header (`<header>`: crumb row + actions + the 对话/轨迹
+ *  tabs), reached from the conversation scrollport — the `.root` wrapper is its
+ *  grandparent, so `querySelector('header')` inside that wrapper can only hit
+ *  the session header. */
+function sessionHeader(): HTMLElement | null {
+  try {
+    const scroll = document.querySelector('[data-conversation-scroll]')
+    const conversationRoot = scroll ? scroll.parentElement?.parentElement : null
+    return conversationRoot ? (conversationRoot.querySelector('header') as HTMLElement | null) : null
+  } catch { return null }
+}
+
+/**
+ * Measure the chrome rectangles the overlay may have to leave uncovered.
+ *
+ * Anchors, deliberately, are STABLE attributes rather than the shell's
+ * CSS-module class names (which are per-build hashes and would break silently
+ * on a dsh update): the frame is found through `[data-shell-overlay]` and its
+ * first child is the sidebar column (the frame renders sidebar | center |
+ * rightbar in that order); the header comes from {@link sessionHeader}. Every
+ * lookup is defensive — a missing node yields 0, which keeps the overlay
+ * covering that edge (the safe direction).
+ */
+function measureChrome(): { sidebar: number; header: number } {
+  const frame = shellFrame()
+  const sidebarCol = frame ? (frame.firstElementChild as HTMLElement | null) : null
+  const header = sessionHeader()
+  const box = (el: HTMLElement | null) => {
+    if (!el) return { w: 0, h: 0 }
+    try {
+      const r = el.getBoundingClientRect()
+      return { w: r.width, h: r.height }
+    } catch { return { w: 0, h: 0 } }
+  }
+  return { sidebar: box(sidebarCol).w, header: box(header).h }
+}
+
 function FocusContent(props: any) {
   const { useSessions, sessions, workspaces, conversation, chatFileMentions, uiSession, uiConversation, settingsScope, t } = props
   const prefs = usePrefs()
@@ -218,14 +269,18 @@ function FocusContent(props: any) {
   // the session snapshot itself keeps only lifecycle/control state.
   const chatView = useChatView(uiConversation, currentId)
   const transcriptView = useTranscriptViewMode(settingsScope)
+  // "隐藏工作过程" ON keeps following the official 对话显示 preference (compact:
+  // the folded counts summary). OFF forces the official normal form, so the
+  // whole work flow is rendered — same renderer, no separate mode.
+  const viewMode = transcriptModeFor(prefs.hideProcess, transcriptView)
   const legacy = useMemo(() => legacySliceOf(chatView, snap), [chatView, snap])
       // `stable` = the streaming tail has drained (partial null): only a stable
     // snapshot lets the LAST turn fold — while streaming it stays normal-form.
     const stable = legacy.partial == null
   const mdLabels = useMemo(() => markdownLabels(t), [t])
     const items = useMemo(
-      () => (snap ? buildItems(legacy.nodes, legacy.runningCalls, t, transcriptView, stable) : []),
-      [snap, legacy, t, transcriptView, stable],
+      () => (snap ? buildItems(legacy.nodes, legacy.runningCalls, t, viewMode, stable) : []),
+      [snap, legacy, t, viewMode, stable],
     )
   // User toggle state per process segment (keyed by the segment's turn seq —
   // stable across snapshot rebuilds and history prepends, unlike an index
@@ -233,7 +288,7 @@ function FocusContent(props: any) {
   // flips, so the view always starts from the official presentation after a
   // change.
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
-  useEffect(() => { setExpanded(new Set()) }, [transcriptView])
+  useEffect(() => { setExpanded(new Set()) }, [viewMode])
   const wait = usePendingInteraction(uiSession, currentId, snap)
   // Latest-items mirror: the anti-drift corrector below runs on a timer across
   // many renders, so it must read items through a ref — a closed-over `items`
@@ -702,6 +757,10 @@ function FocusContent(props: any) {
   const [borrowAvailable, setBorrowAvailable] = useState<boolean>(false)
   const borrowWanted = prefs.borrow && !!currentId && snap !== null
   const borrowedBar = shouldLiftOfficialComposer({ wanted: borrowWanted, available: borrowAvailable, form })
+  // "隐藏下方状态栏" OFF means the composer's stats row must stay visible; while
+  // the seat is lifted (bar form) that row rides along inside it — see the
+  // status-row section below. Declared here because the lift effect needs it.
+  const keepStatusBar = !prefs.hideStatusBar
   useEffect(() => {
     if (!borrowWanted) { setBorrowAvailable(false); return }
     let tries = 0
@@ -753,6 +812,9 @@ function FocusContent(props: any) {
     if (!borrowedBar) return
     seat.style.setProperty('--fm-lift-width', `${Math.min(prefs.width, LIFT_MAX_WIDTH)}px`)
     seat.classList.add('fm-lift')
+    // Keep the composer's stats row inside the lifted seat when the user asked
+    // for the bottom status bar (the stylesheet hides that row otherwise).
+    seat.classList.toggle('fm-lift-stats', keepStatusBar)
     // Pill → bar handoff: land the caret in the official editor surface and
     // set the dock-focused flag SYNCHRONOUSLY from the DOM outcome — the
     // focusin listener may not have observed this focus, and clearing
@@ -779,9 +841,159 @@ function FocusContent(props: any) {
     }
     return () => {
       seat.classList.remove('fm-lift')
+      seat.classList.remove('fm-lift-stats')
       seat.style.removeProperty('--fm-lift-width')
     }
-  }, [borrowedBar, prefs.width])
+  }, [borrowedBar, prefs.width, keepStatusBar])
+
+  // ---- chrome the user asked to keep visible ----
+  // The overlay is a fixed full-viewport sheet, so "do not hide the sidebar /
+  // the top bar" means insetting it by that chrome's measured rectangle. The
+  // numbers are published as body-level CSS variables (the lifted composer and
+  // the status strip live OUTSIDE the overlay, in the main view, and still need
+  // to line up with it). Re-measured whenever the frame or the header resizes
+  // (sidebar drag, narrow-mode auto-collapse, tab change, window resize) — the
+  // overlays' own layout is pure CSS from there on.
+  const [chrome, setChrome] = useState<{ sidebar: number; header: number }>({ sidebar: 0, header: 0 })
+  const insets: ChromeInsets = chromeInsets({
+    hideSidebar: prefs.hideSidebar,
+    hideTopBar: prefs.hideTopBar,
+    sidebarWidth: chrome.sidebar,
+    headerHeight: chrome.header,
+  })
+  useEffect(() => {
+    if (prefs.hideSidebar && prefs.hideTopBar) return
+    let raf: any = null
+    const sync = () => { raf = null; setChrome(measureChrome()) }
+    const schedule = () => { if (raf == null) raf = requestAnimationFrame(sync) }
+    sync()
+    window.addEventListener('resize', schedule)
+    let observer: ResizeObserver | null = null
+    try {
+      observer = new ResizeObserver(schedule)
+      const frame = shellFrame()
+      const sidebarCol = frame ? frame.firstElementChild : null
+      for (const el of [frame, sidebarCol, sessionHeader()]) {
+        if (el) observer.observe(el)
+      }
+    } catch { /* no ResizeObserver: the resize listener still covers window changes */ }
+    return () => {
+      window.removeEventListener('resize', schedule)
+      if (raf != null) cancelAnimationFrame(raf)
+      try { observer?.disconnect() } catch { /* ignore */ }
+    }
+  }, [prefs.hideSidebar, prefs.hideTopBar, currentId, snap !== null])
+  useEffect(() => {
+    const body = document.body
+    body.style.setProperty('--fm-inset-top', `${insets.top}px`)
+    body.style.setProperty('--fm-inset-left', `${insets.left}px`)
+    return () => {
+      body.style.removeProperty('--fm-inset-top')
+      body.style.removeProperty('--fm-inset-left')
+    }
+  }, [insets.top, insets.left])
+
+  // ---- bottom status bar (the composer's stats row) ----
+  // Kept visible in one of two ways, mirroring the two composer states:
+  //   * the seat IS lifted (bar form + official composer borrowed) → the row
+  //     travels with it, right under the card, exactly like the normal view
+  //     (the stylesheet's `.fm-lift-stats` opt-out of the dock-row hide);
+  //   * any other dock form → the seat stays in the main view's scroll flow,
+  //     so the row alone is CSS-lifted into a bottom strip
+  //     (`.fm-status-lift`, decided by the pure shouldLiftStatusRow).
+  // The row's measured height is published as --fm-status-h so the plugin's own
+  // dock (pill / jump button / answer card / fallback bar) clears the strip.
+  const statusSolo = shouldLiftStatusRow({ keepStatus: keepStatusBar, seatLifted: borrowedBar })
+  const [statusH, setStatusH] = useState<number>(0)
+  useEffect(() => {
+    const dock = statusDock()
+    if (!dock) { setStatusH(0); return }
+    dock.classList.toggle('fm-status-lift', statusSolo)
+    const read = () => {
+      let h = 0
+      try { h = dock.getBoundingClientRect().height } catch { h = 0 }
+      setStatusH(keepStatusBar ? h : 0)
+    }
+    read()
+    let observer: ResizeObserver | null = null
+    try { observer = new ResizeObserver(read); observer.observe(dock) } catch { /* ignore */ }
+    return () => {
+      try { observer?.disconnect() } catch { /* ignore */ }
+      dock.classList.remove('fm-status-lift')
+    }
+  }, [statusSolo, keepStatusBar, currentId, snap !== null])
+  useEffect(() => {
+    const body = document.body
+    body.style.setProperty('--fm-status-h', `${statusH}px`)
+    return () => { body.style.removeProperty('--fm-status-h') }
+  }, [statusH])
+
+  // ---- the band the reading surface must keep clear ----
+  // The scrollport ends where the bottom surface begins, so the composer can
+  // never be painted over the conversation: the transcript's visible area is
+  // the sheet minus whatever the dock (or the CSS-lifted official composer)
+  // currently occupies. Published as --fm-bottom-reserve; a ResizeObserver on
+  // both candidates keeps it exact while the bar grows a line, the todo panel
+  // appears, or the answer card opens, and the pure bottomReserve() owns the
+  // policy (taller surface wins, with a reading floor).
+  //
+  // Applied IMPERATIVELY, and — critically — the reader's distance to the end
+  // of the conversation is carried across the change. Two reasons:
+  //   * a reader sitting at the live edge must not lose the newest lines when
+  //     the composer claims a taller band (the window shrinks under them);
+  //   * the band is what the bottom ZONE decided, and the zone is derived from
+  //     that same distance. Letting the band change the distance would feed the
+  //     decision back into itself: a bar tall enough to push the reader past the
+  //     exit threshold would collapse to the jump button, which hands the
+  //     distance back, which re-opens the bar… flickering forever with the
+  //     reader unable to scroll anywhere. Carrying it over keeps the verdict
+  //     stable no matter how tall the composer gets.
+  const dockRef = useRef<HTMLDivElement | null>(null)
+  const appliedBand = useRef<number>(0)
+  useEffect(() => {
+    const read = () => {
+      let dock = 0
+      try {
+        const h = dockRef.current ? dockRef.current.getBoundingClientRect().height : 0
+        if (h > 0) dock = h + DOCK_BOTTOM_PX + statusH
+      } catch { /* ignore */ }
+      let seat = 0
+      try {
+        const el = document.querySelector('[data-composer-seat].fm-lift')
+        const h = el ? el.getBoundingClientRect().height : 0
+        if (h > 0) seat = h + LIFT_BOTTOM_PX
+      } catch { /* ignore */ }
+      const available = overlayRef.current ? overlayRef.current.clientHeight : 0
+      const next = bottomReserve({ dock, seat, available })
+      if (next === appliedBand.current) return
+      const el = bodyEl
+      // Distance to the end to carry over, captured against the OLD geometry.
+      const keep = el ? pinnedDistanceOnReserveChange(el.scrollHeight - el.scrollTop - el.clientHeight, el.clientHeight) : null
+      appliedBand.current = next
+      document.body.style.setProperty('--fm-bottom-reserve', `${next}px`)
+      if (el && keep !== null) {
+        // The band already moved the scrollport's edge; re-anchor the reader.
+        const target = el.scrollHeight - el.clientHeight - keep
+        if (Math.abs(el.scrollTop - target) > 0.5) {
+          el.scrollTop = target
+          scheduleRecompute()
+        }
+      }
+    }
+    read()
+    let observer: ResizeObserver | null = null
+    try {
+      observer = new ResizeObserver(read)
+      if (dockRef.current) observer.observe(dockRef.current)
+      const seat = composerSeat()
+      if (seat) observer.observe(seat)
+    } catch { /* ignore */ }
+    return () => {
+      try { observer?.disconnect() } catch { /* ignore */ }
+      appliedBand.current = 0
+      document.body.style.removeProperty('--fm-bottom-reserve')
+    }
+  }, [form, borrowedBar, statusH, keepStatusBar, currentId, snap !== null])
 
   // Sends made through the OFFICIAL composer (its own Enter/submit gesture)
   // never pass through our send() — arm the send-reveal from the draft's
@@ -999,10 +1211,15 @@ function FocusContent(props: any) {
 
   return (
     <div className="fm-overlay" ref={overlayRef} tabIndex={-1}>
-      <div className="fm-topbar">
-        <div className="fm-title">{title}</div>
-        <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
-      </div>
+      {/* With the session header kept visible (隐藏上方状态栏 off) its title row
+          already names the session and carries the 专注 button (which toggles
+          back out) — a second topbar here would just repeat the title. */}
+      {prefs.hideTopBar ? (
+        <div className="fm-topbar">
+          <div className="fm-title">{title}</div>
+          <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
+        </div>
+      ) : null}
       <div className="fm-body-wrap">
         <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={scheduleRecompute}>{body}</div>
         {currentId && snap !== null ? (
@@ -1017,7 +1234,7 @@ function FocusContent(props: any) {
       </div>
       {nav}
       {currentId && snap !== null ? (
-        <div className="fm-dock">
+        <div className="fm-dock" ref={dockRef}>
           <FocusBottomDock
             t={t}
             width={prefs.width}
@@ -1071,9 +1288,23 @@ export function FocusOverlay(props: any) {
 }
 
 export function FocusToggle({ t }: { t: FocusTranslate }) {
+  // A real toggle: while the user keeps the session header visible inside focus
+  // mode (settings.hideTopBar off) this header button is the visible way back
+  // out — the overlay renders no topbar of its own then. Outside focus mode it
+  // is the entry point, exactly as before.
+  const on = useFocus()
   return (
-    <Button variant="ghost" size="sm" title={t('toggle.title')} onClick={() => { focusStore.captureChatAnchor(); focusStore.set(true) }}>
-      {t('toggle')}
+    <Button
+      variant="ghost"
+      size="sm"
+      title={t(on ? 'toggle.on' : 'toggle.title')}
+      onClick={() => {
+        if (on) { focusStore.set(false); return }
+        focusStore.captureChatAnchor()
+        focusStore.set(true)
+      }}
+    >
+      {t(on ? 'toggle.on' : 'toggle')}
     </Button>
   )
 }
@@ -1116,6 +1347,37 @@ function FocusPrefsFields({ t }: { t: FocusTranslate }) {
           <span className="fm-plugin-check-label">{t('settings.navbar')}</span>
         </label>
         <p className="fm-plugin-field-hint">{t('settings.navbar.hint')}</p>
+      </div>
+      {/* What the full-screen sheet covers. Every switch defaults to ON, so the
+          shipped all-hidden focus view is the out-of-the-box behaviour; turning
+          one off reveals exactly that piece of the shipped chrome. */}
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.hideSidebar} onChange={(e) => prefsStore.update({ hideSidebar: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.hideSidebar')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.hideSidebar.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.hideTopBar} onChange={(e) => prefsStore.update({ hideTopBar: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.hideTopBar')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.hideTopBar.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.hideStatusBar} onChange={(e) => prefsStore.update({ hideStatusBar: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.hideStatusBar')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.hideStatusBar.hint')}</p>
+      </div>
+      <div className="fm-plugin-field">
+        <label className="fm-plugin-check">
+          <input type="checkbox" checked={prefs.hideProcess} onChange={(e) => prefsStore.update({ hideProcess: e.target.checked })} />
+          <span className="fm-plugin-check-label">{t('settings.hideProcess')}</span>
+        </label>
+        <p className="fm-plugin-field-hint">{t('settings.hideProcess.hint')}</p>
       </div>
     </>
   )

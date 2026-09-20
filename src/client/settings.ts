@@ -15,10 +15,41 @@ export interface FocusPrefs {
    *  editing surface) instead of the plugin's textarea; falls back to the
    *  textarea when the official composer DOM is unavailable. */
   borrow: boolean
+  /** Cover the sidebar column while focus is on (default). Turned off, the
+   *  overlay stops at the sidebar's right edge and the sidebar stays visible
+   *  and usable. */
+  hideSidebar: boolean
+  /** Cover the session header (title + 对话/轨迹 tabs) while focus is on
+   *  (default). Turned off, the overlay starts below the header and the
+   *  overlay renders no topbar of its own — the header owns the title and the
+   *  专注 button (which then toggles back out). */
+  hideTopBar: boolean
+  /** Cover the composer's stats row (turns/steps · tok/s · cache · cost) while
+   *  focus is on (default). Turned off, that row stays visible: under the
+   *  lifted composer when the input bar is up, otherwise pinned to the bottom
+   *  of the viewport. */
+  hideStatusBar: boolean
+  /** Fold each turn's work (tool calls, edits, searches…) into the official
+   *  one-line counts summary (default — the shipped behaviour). Turned off,
+   *  the overlay renders the official normal form: every step shown. */
+  hideProcess: boolean
 }
 
 const KEY = 'dsh-focus-overlay:prefs'
-const DEFAULTS: FocusPrefs = { navbar: true, scroll: 'preserve', width: 760, autoFocus: false, hotkey: true, borrow: true }
+const DEFAULTS: FocusPrefs = {
+  navbar: true,
+  scroll: 'preserve',
+  width: 760,
+  autoFocus: false,
+  hotkey: true,
+  borrow: true,
+  // Defaults keep the shipped all-hidden focus view: every new switch has to
+  // be turned OFF to reveal the chrome it covers.
+  hideSidebar: true,
+  hideTopBar: true,
+  hideStatusBar: true,
+  hideProcess: true,
+}
 
 function load(): FocusPrefs {
   try {

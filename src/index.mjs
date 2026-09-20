@@ -15,6 +15,11 @@ export const FocusSettingsSchema = z.object({
   width: z.number().default(760),
   autoFocus: z.boolean().default(false),
   hotkey: z.boolean().default(true),
+  // The four "what to keep visible" switches; all ON = the shipped focus view.
+  hideSidebar: z.boolean().default(true),
+  hideTopBar: z.boolean().default(true),
+  hideStatusBar: z.boolean().default(true),
+  hideProcess: z.boolean().default(true),
 })
 
 export default function apply(ctx) {

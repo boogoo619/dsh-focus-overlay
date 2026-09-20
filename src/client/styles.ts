@@ -1,12 +1,23 @@
 /** Package-owned stylesheet text (injected by the client apply, cleaned up on unload). */
-import { LIFT_MAX_WIDTH } from './model'
+import { LIFT_MAX_WIDTH, DOCK_BOTTOM_PX, LIFT_BOTTOM_PX, REVEAL_RESERVE_PX } from './model'
 
 export const FOCUS_CSS = `
-.fm-overlay{position:fixed;inset:0;z-index:2147483000;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
+/* The sheet is inset by the chrome the user asked to KEEP visible (sidebar /
+   session header): the plugin writes --fm-inset-top / --fm-inset-left on
+   <body> from the live rectangles it measures, so the shipped chrome shows
+   through the reserved bands. Both default to 0 — the shipped full-bleed
+   overlay. */
+.fm-overlay{position:fixed;inset:var(--fm-inset-top,0px) 0 0 var(--fm-inset-left,0px);z-index:2147483000;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
 .fm-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));flex:0 0 auto}
 .fm-title{font-size:calc(14px + var(--dsh-content-font-delta,0px));font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-body-wrap{position:relative;flex:1 1 auto;display:flex;min-height:0}
-.fm-body{flex:1 1 auto;min-width:0;overflow-y:auto;padding:28px 28px 160px}
+/* The scrollport STOPS where the bottom surface starts (--fm-bottom-reserve is
+   the live height of the dock / lifted composer, measured by the plugin), so
+   the composer is never painted over the text: it occupies its own band below
+   the reading area, exactly like the composer in the normal view. The margin
+   shrinks the scroller (a flex item's stretched height minus its margins), the
+   padding is ordinary trailing breathing room. */
+.fm-body{flex:1 1 auto;min-width:0;overflow-y:auto;padding:28px 28px ${REVEAL_RESERVE_PX}px;margin-bottom:var(--fm-bottom-reserve,0px)}
 .fm-inner{max-width:760px;margin:0 auto}
 .fm-msg{margin:0}
 .fm-user-msg{margin:0}
@@ -56,7 +67,7 @@ export const FOCUS_CSS = `
 @keyframes fm-sweep{to{background-position:0 0}}
 @media (prefers-reduced-motion:reduce){.fm-running{animation:none}.fm-running-text{background:0 0;color:var(--dsw-static-deepseek-500,#4176e6);-webkit-text-fill-color:currentColor;animation:none}}
 .fm-empty{color:var(--dsw-alias-label-secondary,#888);padding:48px 16px;text-align:center}
-.fm-reply-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:84px;z-index:2;display:flex;align-items:center;gap:10px;background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:100px;padding:8px 8px 8px 16px;box-shadow:var(--dsw-shadow-lv2,0 4px 16px rgba(0,0,0,.12));font-size:var(--dsh-content-font-size-secondary,13px)}
+.fm-reply-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(var(--fm-bottom-reserve,0px) + 12px);z-index:2;display:flex;align-items:center;gap:10px;background:var(--dsw-alias-bg-overlay,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));border-radius:100px;padding:8px 8px 8px 16px;box-shadow:var(--dsw-shadow-lv2,0 4px 16px rgba(0,0,0,.12));font-size:var(--dsh-content-font-size-secondary,13px)}
 .fm-reply-toast-dot{width:8px;height:8px;border-radius:999px;background:var(--dsw-static-deepseek-500,#4176e6);flex:0 0 auto}
 .fm-reply-toast-text{white-space:nowrap}
 /* ---- official-composer borrow: the lifted input bar ----
@@ -72,14 +83,24 @@ export const FOCUS_CSS = `
    seat-level background or shadow would draw a translucent SQUARE behind
    the rounded card. Only the card's own skin shows; the seat's empty area
    is click-transparent so the reading surface beneath stays interactive. */
-.fm-lift{position:fixed!important;left:50%!important;right:auto!important;top:auto!important;bottom:20px!important;transform:translateX(-50%)!important;width:min(var(--fm-lift-width,${LIFT_MAX_WIDTH}px),calc(100vw - 48px))!important;max-width:calc(100vw - 48px)!important;z-index:2147483200!important;margin:0!important;box-shadow:none!important;background:0 0!important;pointer-events:none}
+.fm-lift{position:fixed!important;left:calc(50% + var(--fm-inset-left,0px) / 2)!important;right:auto!important;top:auto!important;bottom:${LIFT_BOTTOM_PX}px!important;transform:translateX(-50%)!important;width:min(var(--fm-lift-width,${LIFT_MAX_WIDTH}px),calc(100vw - var(--fm-inset-left,0px) - 48px))!important;max-width:calc(100vw - var(--fm-inset-left,0px) - 48px)!important;z-index:2147483200!important;margin:0!important;box-shadow:none!important;background:0 0!important;pointer-events:none}
 /* The composer's dock row (queue/references rail) is hidden while lifted on
    purpose: focus mode's dock is the plugin's own bottom-center region, and a
    second rail inside the floating bar would duplicate it. Noteboard's canvas
    borrow does the same. This drops that row's affordances IN FOCUS MODE only
-   (the main view keeps them); revisit if a focus-mode user needs them. */
-.fm-lift [data-slot="conversation.composer.dock"]{display:none!important}
+   (the main view keeps them); revisit if a focus-mode user needs them.
+   EXCEPTION: while the user asked to keep the bottom status bar, that row IS
+   wanted (it holds the official stats row) and stays visible under the card. */
+.fm-lift:not(.fm-lift-stats) [data-slot="conversation.composer.dock"]{display:none!important}
 .fm-lift [data-composer-card]{pointer-events:auto}
+/* Bottom status bar kept while the composer seat is NOT lifted (the dock is
+   not in the bar form, so the seat stays in the main view's scroll flow and
+   the row would stay buried under the sheet): the row itself is CSS-lifted
+   into a bottom strip, mirroring .fm-lift's contract — fixed above the
+   overlay, left-aligned with the sheet so it lines up with the reading column
+   when the sidebar is kept. display:contents must be overridden for the fixed
+   box to exist (the slot anchor is a display:contents wrapper). */
+.fm-status-lift{position:fixed!important;left:var(--fm-inset-left,0px)!important;right:0!important;top:auto!important;bottom:0!important;display:block!important;z-index:2147483200!important;background:var(--dsw-alias-bg-base,#fff);padding-bottom:4px;pointer-events:auto}
 /* Cap the lifted editor's scroll area: a long multi-line draft must not grow
    the floating card over half the reading surface (the main view allows the
    full composer column height, which focus mode cannot afford). */
@@ -90,7 +111,7 @@ export const FOCUS_CSS = `
    PlanReviewPanel): --dsw-specific-input-major surfaces, 20–22px radii,
    --dsw-shadow-lv2, the 34px round info-fill primary button, interactive-
    hover option tinting. */
-.fm-dock{position:absolute;left:50%;transform:translateX(-50%);bottom:18px;z-index:3;width:calc(100% - 96px);display:flex;justify-content:center;pointer-events:none}
+.fm-dock{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(${DOCK_BOTTOM_PX}px + var(--fm-status-h,0px));z-index:3;width:calc(100% - 96px);display:flex;justify-content:center;pointer-events:none}
 .fm-dock>*{pointer-events:auto;animation:fm-up .18s ease}
 .fm-bar{box-sizing:border-box;width:100%;background:var(--dsw-specific-input-major,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);border:1px solid var(--dsw-alias-border-l2-darkmode-thin,rgba(0,0,0,.12));box-shadow:var(--dsw-shadow-lv2,0 4px 16px rgba(0,0,0,.12));border-radius:22px;padding-top:10px;display:flex;flex-direction:column;font-size:calc(var(--dsh-content-font-size,14px) + 2px);line-height:calc(24px + var(--dsh-content-font-delta,0px))}
 .fm-bar-row{display:flex;align-items:flex-end;gap:12px;min-width:0;padding:2px 8px 6px}
