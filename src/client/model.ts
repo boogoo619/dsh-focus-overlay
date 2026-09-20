@@ -692,6 +692,31 @@ export function bottomReserve(o: BottomBands & { available: number }): number {
   return Math.round(Math.min(want, cap))
 }
 
+/**
+ * The distance to the end of the conversation that must survive a
+ * {@link bottomReserve} change, or null when the change may simply resize the
+ * window under the reader.
+ *
+ * Changing the reserve moves the scrollport's bottom edge, so a reader whose
+ * view still contains the end of the conversation would see the newest lines
+ * slide out of view — and, worse, the bottom zone is derived from exactly that
+ * distance, so the change would feed back into the decision that caused it: a
+ * composer tall enough to push the reader past the exit threshold would
+ * collapse to the jump button, which hands the distance back, which re-opens
+ * the composer — flickering forever, with the reader unable to scroll anywhere.
+ * Carrying the distance over the change keeps the zone's verdict stable for any
+ * composer height.
+ *
+ * Only readers who can actually see the end are re-anchored: someone reading
+ * far up the conversation keeps their scrollTop (a shorter window simply cuts
+ * off below their view, which is exactly what they expect).
+ */
+export function pinnedDistanceOnReserveChange(raw: number, windowHeight: number): number | null {
+  if (!Number.isFinite(raw) || !Number.isFinite(windowHeight) || windowHeight <= 0) return null
+  if (raw > windowHeight) return null
+  return Math.max(0, raw)
+}
+
 /** Distance from the scroll end that counts as "at the bottom" (entering). */
 export const BOTTOM_ENTER_PX = 48
 /** Distance beyond which the reader has left the bottom zone (leaving). */

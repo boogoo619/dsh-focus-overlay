@@ -3,7 +3,7 @@ import { MarkdownText, projectUserText, Button, Modal, IconChevronDownOutline14 
 import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
 import { markdownLabels } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar, chromeInsets, shouldLiftStatusRow, transcriptModeFor, bottomReserve, DOCK_BOTTOM_PX, LIFT_BOTTOM_PX, type ChromeInsets } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar, chromeInsets, shouldLiftStatusRow, transcriptModeFor, bottomReserve, pinnedDistanceOnReserveChange, DOCK_BOTTOM_PX, LIFT_BOTTOM_PX, type ChromeInsets } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 import { celebrateThenOpen } from './celebrate'
 import { TurnRail, type RailItem } from './TurnRail'
@@ -936,8 +936,20 @@ function FocusContent(props: any) {
   // both candidates keeps it exact while the bar grows a line, the todo panel
   // appears, or the answer card opens, and the pure bottomReserve() owns the
   // policy (taller surface wins, with a reading floor).
+  //
+  // Applied IMPERATIVELY, and — critically — the reader's distance to the end
+  // of the conversation is carried across the change. Two reasons:
+  //   * a reader sitting at the live edge must not lose the newest lines when
+  //     the composer claims a taller band (the window shrinks under them);
+  //   * the band is what the bottom ZONE decided, and the zone is derived from
+  //     that same distance. Letting the band change the distance would feed the
+  //     decision back into itself: a bar tall enough to push the reader past the
+  //     exit threshold would collapse to the jump button, which hands the
+  //     distance back, which re-opens the bar… flickering forever with the
+  //     reader unable to scroll anywhere. Carrying it over keeps the verdict
+  //     stable no matter how tall the composer gets.
   const dockRef = useRef<HTMLDivElement | null>(null)
-  const [bottomBand, setBottomBand] = useState<number>(0)
+  const appliedBand = useRef<number>(0)
   useEffect(() => {
     const read = () => {
       let dock = 0
@@ -952,7 +964,21 @@ function FocusContent(props: any) {
         if (h > 0) seat = h + LIFT_BOTTOM_PX
       } catch { /* ignore */ }
       const available = overlayRef.current ? overlayRef.current.clientHeight : 0
-      setBottomBand(bottomReserve({ dock, seat, available }))
+      const next = bottomReserve({ dock, seat, available })
+      if (next === appliedBand.current) return
+      const el = bodyEl
+      // Distance to the end to carry over, captured against the OLD geometry.
+      const keep = el ? pinnedDistanceOnReserveChange(el.scrollHeight - el.scrollTop - el.clientHeight, el.clientHeight) : null
+      appliedBand.current = next
+      document.body.style.setProperty('--fm-bottom-reserve', `${next}px`)
+      if (el && keep !== null) {
+        // The band already moved the scrollport's edge; re-anchor the reader.
+        const target = el.scrollHeight - el.clientHeight - keep
+        if (Math.abs(el.scrollTop - target) > 0.5) {
+          el.scrollTop = target
+          scheduleRecompute()
+        }
+      }
     }
     read()
     let observer: ResizeObserver | null = null
@@ -962,13 +988,12 @@ function FocusContent(props: any) {
       const seat = composerSeat()
       if (seat) observer.observe(seat)
     } catch { /* ignore */ }
-    return () => { try { observer?.disconnect() } catch { /* ignore */ } }
+    return () => {
+      try { observer?.disconnect() } catch { /* ignore */ }
+      appliedBand.current = 0
+      document.body.style.removeProperty('--fm-bottom-reserve')
+    }
   }, [form, borrowedBar, statusH, keepStatusBar, currentId, snap !== null])
-  useEffect(() => {
-    const body = document.body
-    body.style.setProperty('--fm-bottom-reserve', `${bottomBand}px`)
-    return () => { body.style.removeProperty('--fm-bottom-reserve') }
-  }, [bottomBand])
 
   // Sends made through the OFFICIAL composer (its own Enter/submit gesture)
   // never pass through our send() — arm the send-reveal from the draft's

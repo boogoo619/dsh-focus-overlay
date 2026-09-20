@@ -27,6 +27,7 @@ import {
   chromeInsets,
   shouldLiftStatusRow,
   bottomReserve,
+  pinnedDistanceOnReserveChange,
   DOCK_BOTTOM_PX,
   LIFT_BOTTOM_PX,
   READING_FLOOR_PX,
@@ -949,5 +950,29 @@ describe('bottomReserve', () => {
     expect(DOCK_BOTTOM_PX).toBe(18)
     expect(LIFT_BOTTOM_PX).toBe(20)
     expect(READING_FLOOR_PX).toBe(160)
+  })
+})
+
+describe('pinnedDistanceOnReserveChange', () => {
+  it('carries the distance to the end over a reserve change while the end is visible', () => {
+    // At the live edge, and anywhere within the last screenful.
+    expect(pinnedDistanceOnReserveChange(0, 700)).toBe(0)
+    expect(pinnedDistanceOnReserveChange(120, 700)).toBe(120)
+    expect(pinnedDistanceOnReserveChange(700, 700)).toBe(700)
+  })
+
+  it('leaves a reader who cannot see the end alone (plain window resize)', () => {
+    expect(pinnedDistanceOnReserveChange(701, 700)).toBeNull()
+    expect(pinnedDistanceOnReserveChange(5000, 700)).toBeNull()
+  })
+
+  it('treats a conversation shorter than the window as "at the end"', () => {
+    expect(pinnedDistanceOnReserveChange(-40, 700)).toBe(0)
+  })
+
+  it('refuses broken geometry', () => {
+    expect(pinnedDistanceOnReserveChange(Number.NaN, 700)).toBeNull()
+    expect(pinnedDistanceOnReserveChange(10, Number.NaN)).toBeNull()
+    expect(pinnedDistanceOnReserveChange(10, 0)).toBeNull()
   })
 })

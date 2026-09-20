@@ -294,6 +294,53 @@ function assertNoCover(state, label) {
   }
 }
 
+/** One reading of the bottom state: which dock form is up, and how far the
+ *  reader is from the end of the conversation. */
+async function sampleDock(page) {
+  return page.evaluate(() => {
+    const body = document.querySelector('.fm-body')
+    const raw = body ? Math.round(body.scrollHeight - body.scrollTop - body.clientHeight) : null
+    const lifted = !!document.querySelector('[data-composer-seat].fm-lift')
+    const bar = !!document.querySelector('.fm-bar')
+    const pill = document.querySelector('.fm-pill')
+    const jump = !!pill && /回到最新/.test(pill.getAttribute('title') || '')
+    return {
+      raw,
+      reserve: getComputedStyle(document.body).getPropertyValue('--fm-bottom-reserve').trim(),
+      form: lifted || bar ? 'bar' : (jump ? 'jump' : (pill ? 'pill' : 'none')),
+    }
+  })
+}
+
+/**
+ * Scroll to the bottom the way a person does (small steps, not one jump) and
+ * then watch the dock for a while. Two things must hold:
+ *
+ *   1. the dock SETTLES — the reserve changes the scrollport's height, and a
+ *      bottom zone derived from the old geometry would flip the dock back and
+ *      forth (bar ⟷ jump button), leaving the reader stuck with the ↓ button
+ *      and unable to scroll any further;
+ *   2. the newest line stays visible (distance ≈ 0) — the reserve change must
+ *      carry the reader's distance to the end over, not push it out of view.
+ */
+async function assertBottomSettles(page, label) {
+  for (let i = 0; i < 26; i++) {
+    await page.evaluate(() => { const b = document.querySelector('.fm-body'); if (b) b.scrollBy(0, 90) })
+    await page.waitForTimeout(45)
+  }
+  await page.waitForTimeout(500)
+  const samples = []
+  for (let i = 0; i < 6; i++) { samples.push(await sampleDock(page)); await page.waitForTimeout(180) }
+  const forms = [...new Set(samples.map((s) => s.form))]
+  if (forms.length === 1) pass(`${label}: the dock settles at the bottom (${forms[0]}, reserve ${samples[0].reserve})`)
+  else fail(`${label}: the dock flickers at the bottom — ${samples.map((s) => `${s.form}@${s.raw}`).join(' → ')}`)
+  const last = samples[samples.length - 1]
+  if (last.form !== 'jump') pass(`${label}: the ↓ button is gone once the bottom is reached (${last.form})`)
+  else fail(`${label}: the ↓ button stays up at the very bottom (distance ${last.raw}, reserve ${last.reserve})`)
+  if (last.raw !== null && Math.abs(last.raw) <= 2) pass(`${label}: the newest line is still on screen (distance ${last.raw})`)
+  else fail(`${label}: reaching the bottom pushed the end out of view (distance ${last.raw})`)
+}
+
 let browser = null
 
 try {
@@ -344,6 +391,10 @@ try {
       // --- work process unfolded ---
       if (before.folded === 0) pass('no folded work-process disclosure while the process is shown')
       else fail(`${before.folded} folded process row(s) rendered although the process is shown`)
+
+      // --- the dock must settle when the reader reaches the bottom ---
+      await assertBottomSettles(page, 'PASS A')
+      await shoot(page, 'keep-chrome-bottom-settled.png')
 
       // --- input bar up: the row must ride WITH the lifted composer ---
       await page.evaluate(() => {
@@ -411,6 +462,36 @@ try {
       if (after.folded > 0) pass(`work process folded again (${after.folded} disclosure row(s), ${after.workRows} hidden row(s))`)
       else console.log('  · this session has no foldable work — folded-row count not asserted')
       assertNoCover(after, 'PASS B')
+      await assertBottomSettles(page, 'PASS B')
+
+      // --- stress: a multi-line draft makes the composer much taller, which is
+      // exactly the state that used to flicker. The band grows line by line, so
+      // the reader must stay pinned to the newest line the whole time. ---
+      const editable = page.locator('[data-composer-seat] [contenteditable="true"]').first()
+      if ((await editable.count()) > 0) {
+        await editable.click()
+        await page.waitForTimeout(300)
+        for (let i = 1; i <= 6; i++) {
+          await page.keyboard.down('Shift'); await page.keyboard.press('Enter'); await page.keyboard.up('Shift')
+          await page.keyboard.type(`draft line ${i}`)
+        }
+        await page.waitForTimeout(600)
+        const tall = []
+        for (let i = 0; i < 5; i++) { tall.push(await sampleDock(page)); await page.waitForTimeout(180) }
+        const tallForms = [...new Set(tall.map((s) => s.form))]
+        const last = tall[tall.length - 1]
+        if (tallForms.length === 1) pass(`PASS B · tall draft: the dock stays stable (${tallForms[0]}, reserve ${last.reserve})`)
+        else fail(`PASS B · tall draft: the dock flickers — ${tall.map((s) => `${s.form}@${s.raw}`).join(' → ')}`)
+        if (Math.abs(last.raw ?? 999) <= 2) pass(`PASS B · tall draft: the newest line is still on screen (distance ${last.raw})`)
+        else fail(`PASS B · tall draft: the composer pushed the end out of view (distance ${last.raw}, reserve ${last.reserve})`)
+        await shoot(page, 'keep-chrome-tall-draft.png')
+        // Leave the session as we found it: clear the test draft.
+        await page.keyboard.press('Control+a')
+        await page.keyboard.press('Delete')
+        await page.waitForTimeout(400)
+      } else {
+        console.log('  · no borrowed composer to type into — tall-draft stress skipped')
+      }
     } else {
       fail('could not exercise any stored session with a completed turn in PASS B')
     }
