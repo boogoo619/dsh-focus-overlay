@@ -15,6 +15,10 @@ import {
   hasPendingInteraction,
   legacySliceOf,
   pendingInteractionOf,
+  pendingInteractionFromStatus,
+  currentSessionIdOf,
+  transcriptViewOf,
+  sessionFileAddressOf,
   legacyPendingOf,
   onboardingSeen,
   hotkeyShouldEnter,
@@ -278,6 +282,93 @@ describe('pendingInteractionOf (dsh 0.1.2 pending map)', () => {
   it('returns null defensively', () => {
     expect(pendingInteractionOf(null, 's1')).toBe(null)
     expect(pendingInteractionOf(undefined, undefined)).toBe(null)
+  })
+})
+
+describe('pendingInteractionFromStatus (dsh 0.2 session status)', () => {
+  const interaction = { kind: 'approval', key: 'k2' }
+  it('unwraps the pendingInteraction field of the session status entry', () => {
+    const status = new Map([['s1', { running: false, pendingInteraction: interaction, completionUnread: false }]])
+    expect(pendingInteractionFromStatus(status, 's1')).toBe(interaction)
+  })
+  it('returns null without an entry or without a pending interaction', () => {
+    const status = new Map([['s1', { running: true, pendingInteraction: undefined }]])
+    expect(pendingInteractionFromStatus(status, 's1')).toBe(null)
+    expect(pendingInteractionFromStatus(status, 's2')).toBe(null)
+    expect(pendingInteractionFromStatus(null, 's1')).toBe(null)
+  })
+})
+
+describe('currentSessionIdOf (session-identity adapter)', () => {
+  it('prefers the 0.1.x list `current` field', () => {
+    expect(currentSessionIdOf({ current: 's-old', byId: {} }, { key: 's-new' })).toBe('s-old')
+  })
+  it('reads the 0.2 uiSession main binding snapshot (key)', () => {
+    expect(currentSessionIdOf({ byId: {} }, { key: 's-main' })).toBe('s-main')
+  })
+  it('reads the main binding sessionId prop when there is no key', () => {
+    expect(currentSessionIdOf({ byId: {} }, { props: { sessionId: 's-prop' } })).toBe('s-prop')
+  })
+  it('falls back to the mainView-retained list row', () => {
+    const byId = {
+      a: { id: 'a', retainedBy: {} },
+      b: { id: 'b', retainedBy: { mainView: 1 } },
+    }
+    expect(currentSessionIdOf({ byId }, null)).toBe('b')
+  })
+  it('prefers the public list row over the typed-private main binding', () => {
+    // `uiSession.current` is private in the dsh 0.2 types, so the list-row
+    // `retainedBy.mainView` read stays primary; the binding is a last resort.
+    const byId = { a: { id: 'a', retainedBy: { mainView: 1 } } }
+    expect(currentSessionIdOf({ byId }, { key: 'other' })).toBe('a')
+  })
+  it('returns undefined without a resolvable session', () => {
+    expect(currentSessionIdOf(null, null)).toBe(undefined)
+    expect(currentSessionIdOf({ byId: { a: { id: 'a', retainedBy: {} } } }, null)).toBe(undefined)
+  })
+})
+
+describe('sessionFileAddressOf (dsh 0.2 resource address)', () => {
+  it('addresses a workspace-relative path under its session', () => {
+    expect(sessionFileAddressOf('s1', '/w', 'src/a.ts')).toBe('dsh-resource://file/session/s1/src/a.ts')
+  })
+  it('reduces an absolute path inside the workspace root', () => {
+    expect(sessionFileAddressOf('s1', '/w', '/w/src/a.ts')).toBe('dsh-resource://file/session/s1/src/a.ts')
+    expect(sessionFileAddressOf('s1', '/w/', '/w/src/a.ts')).toBe('dsh-resource://file/session/s1/src/a.ts')
+  })
+  it('keeps an absolute path outside the workspace root (leading slash segment preserved)', () => {
+    // The official grammar keeps the absolute spelling as the session path, so
+    // the address carries an empty first segment — exactly as ui-chat builds it.
+    expect(sessionFileAddressOf('s1', '/w', '/other/a.ts')).toBe('dsh-resource://file/session/s1//other/a.ts')
+  })
+  it('component-encodes segments but keeps a Windows drive colon literal', () => {
+    expect(sessionFileAddressOf('s 1', undefined, 'a b/c#d.ts')).toBe('dsh-resource://file/session/s%201/a%20b/c%23d.ts')
+    expect(sessionFileAddressOf('s1', 'C:\\w', 'C:\\w\\src\\a.ts')).toBe('dsh-resource://file/session/s1/src/a.ts')
+    expect(sessionFileAddressOf('s1', undefined, 'C:/x/a.ts')).toBe('dsh-resource://file/session/s1/C:/x/a.ts')
+  })
+  it('drops a leading ./ prefix and normalizes backslashes', () => {
+    expect(sessionFileAddressOf('s1', '/w', './src\\a.ts')).toBe('dsh-resource://file/session/s1/src/a.ts')
+  })
+})
+
+describe('transcriptViewOf (official 对话显示 adapter)', () => {
+  const source = (snapshot: any) => ({ getSnapshot: () => snapshot })
+  it('reads the 0.1.x settings-scope section under `value`', () => {
+    expect(transcriptViewOf(source({ value: { transcriptView: 'compact' } }))).toBe('compact')
+    expect(transcriptViewOf(source({ value: { transcriptView: 'normal' } }))).toBe('normal')
+  })
+  it('reads the 0.2 configForms snapshot under `value`', () => {
+    expect(transcriptViewOf(source({ status: 'ready', value: { transcriptView: 'compact' } }))).toBe('compact')
+    expect(transcriptViewOf(source({ status: 'ready', value: { transcriptView: 'detailed' } }))).toBe('normal')
+    expect(transcriptViewOf(source({ status: 'ready', value: { transcriptView: 'verbose' } }))).toBe('normal')
+  })
+  it('defaults to compact while the preference has not arrived', () => {
+    expect(transcriptViewOf(source({ status: 'loading' }))).toBe('compact')
+    expect(transcriptViewOf(source({ value: {} }))).toBe('compact')
+    expect(transcriptViewOf(null)).toBe('compact')
+  })
+  it('survives a throwing source', () => {
+    expect(transcriptViewOf({ getSnapshot: () => { throw new Error('x') } })).toBe('compact')
   })
 })
 

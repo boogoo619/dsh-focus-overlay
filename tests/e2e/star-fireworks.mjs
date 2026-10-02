@@ -73,37 +73,52 @@ log(JSON.stringify(await page.evaluate(() => ({
   bodyFilter: getComputedStyle(document.body).filter,
 }))))
 
-// ---- walk to the settings page: try common entries, else dump candidates ----
-log('--- navigate to settings ---')
-const candidates = await page.evaluate(() => {
-  const out = []
-  for (const el of document.querySelectorAll('button, [role=button], a, [aria-label]')) {
-    const text = (el.textContent || '').trim()
-    const aria = el.getAttribute('aria-label') || ''
-    const title = el.getAttribute('title') || ''
-    if (/设置|settings|preference/i.test(text + ' ' + aria + ' ' + title)) {
-      const r = el.getBoundingClientRect()
-      out.push({ text: text.slice(0, 24), aria, title, visible: r.width > 0 && r.height > 0 })
+// ---- walk to the plugin's configuration surface ----
+// dsh 0.2: sidebar Plugins page → this bundle's detail (plugins.bundle.config).
+// dsh <= 0.1.x: Settings → Plugins tab → the collapsible settings card.
+log('--- navigate to the plugin configuration ---')
+let cardOpened = false
+const sidebarPlugins = page.locator('button:has-text("插件"), [role="button"]:has-text("插件"), button:has-text("Plugins"), [role="button"]:has-text("Plugins")').first()
+if (await sidebarPlugins.count() > 0) {
+  await sidebarPlugins.click()
+  await page.waitForTimeout(2500)
+  const card = page.locator('section[class*="page"] button[class*="cardTitle"]', { hasText: 'dsh-focus-overlay' }).first()
+  if (await card.count() > 0) { await card.click(); await page.waitForTimeout(2000); cardOpened = true }
+}
+
+if (!cardOpened) {
+  const candidates = await page.evaluate(() => {
+    const out = []
+    for (const el of document.querySelectorAll('button, [role=button], a, [aria-label]')) {
+      const text = (el.textContent || '').trim()
+      const aria = el.getAttribute('aria-label') || ''
+      const title = el.getAttribute('title') || ''
+      if (/设置|settings|preference/i.test(text + ' ' + aria + ' ' + title)) {
+        const r = el.getBoundingClientRect()
+        out.push({ text: text.slice(0, 24), aria, title, visible: r.width > 0 && r.height > 0 })
+      }
     }
-  }
-  return out
-})
-log('candidates: ' + JSON.stringify(candidates))
-const entry = page.locator('[aria-label*="设置"], [title*="设置"], button:has-text("设置"), a:has-text("设置")').first()
-if (await entry.count() === 0) { fail('no settings entry found'); await browser.close(); process.exit(1) }
-await entry.click()
-await page.waitForTimeout(600)
+    return out
+  })
+  log('candidates: ' + JSON.stringify(candidates))
+  const entry = page.locator('[aria-label*="设置"], [title*="设置"], button:has-text("设置"), a:has-text("设置")').first()
+  if (await entry.count() === 0) { fail('no settings entry found'); await browser.close(); process.exit(1) }
+  await entry.click()
+  await page.waitForTimeout(600)
 
-// plugins tab if present
-const pluginsTab = page.locator('[role="tab"]:has-text("插件"), button:has-text("插件"), [aria-label*="插件"], :text("Plugins")').first()
-if (await pluginsTab.count() > 0) { await pluginsTab.click().catch(() => {}); await page.waitForTimeout(400) }
+  // plugins tab if present
+  const pluginsTab = page.locator('[role="tab"]:has-text("插件"), button:has-text("插件"), [aria-label*="插件"], :text("Plugins")').first()
+  if (await pluginsTab.count() > 0) { await pluginsTab.click().catch(() => {}); await page.waitForTimeout(400) }
 
-// ---- expand the plugin card and click the Star button ----
+  // ---- expand the legacy plugin card ----
+  const cardHeader = page.locator('.fm-plugin-card-header').first()
+  if (await cardHeader.count() === 0) { fail('plugin card not found'); await browser.close(); process.exit(1) }
+  await cardHeader.click()
+  await page.waitForTimeout(300)
+}
+
+// ---- click the Star button ----
 log('--- click the Star button ---')
-const cardHeader = page.locator('.fm-plugin-card-header').first()
-if (await cardHeader.count() === 0) { fail('plugin card not found'); await browser.close(); process.exit(1) }
-await cardHeader.click()
-await page.waitForTimeout(300)
 const star = page.locator('button:has-text("GitHub Star")').first()
 if (await star.count() === 0) { fail('star button not found (counter below threshold?)'); await browser.close(); process.exit(1) }
 
@@ -215,12 +230,21 @@ log('screenshots in tests/e2e/out/')
 // ---- phase 2: instrumented synchronous click on a fresh page ----
 log('--- phase 2: instrumented in-page click (fresh reload) ---')
 await page.goto(GUI_ORIGIN, { waitUntil: 'networkidle' })
-await page.locator('[aria-label*="设置"], [title*="设置"], button:has-text("设置"), a:has-text("设置")').first().click()
-await page.waitForTimeout(600)
-const pt = page.locator('[role="tab"]:has-text("插件"), button:has-text("插件"), [aria-label*="插件"], :text("Plugins")').first()
-if (await pt.count() > 0) { await pt.click().catch(() => {}); await page.waitForTimeout(400) }
-await page.locator('.fm-plugin-card-header').first().click()
-await page.waitForTimeout(300)
+await page.waitForTimeout(2500)
+if (await page.locator('button:has-text("插件"), [role="button"]:has-text("插件"), button:has-text("Plugins"), [role="button"]:has-text("Plugins")').first().count() > 0) {
+  // dsh 0.2: sidebar Plugins page → bundle detail (no card chrome to expand).
+  await page.locator('button:has-text("插件"), [role="button"]:has-text("插件"), button:has-text("Plugins"), [role="button"]:has-text("Plugins")').first().click()
+  await page.waitForTimeout(2500)
+  await page.locator('section[class*="page"] button[class*="cardTitle"]', { hasText: 'dsh-focus-overlay' }).first().click()
+  await page.waitForTimeout(2000)
+} else {
+  await page.locator('[aria-label*="设置"], [title*="设置"], button:has-text("设置"), a:has-text("设置")').first().click()
+  await page.waitForTimeout(600)
+  const pt = page.locator('[role="tab"]:has-text("插件"), button:has-text("插件"), [aria-label*="插件"], :text("Plugins")').first()
+  if (await pt.count() > 0) { await pt.click().catch(() => {}); await page.waitForTimeout(400) }
+  await page.locator('.fm-plugin-card-header').first().click()
+  await page.waitForTimeout(300)
+}
 const probe = await page.evaluate(() => {
   return new Promise((resolve) => {
     const events = []
