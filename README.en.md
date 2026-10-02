@@ -76,12 +76,13 @@ Click the line to expand that turn's full work detail (per-category one-line sum
 | Focus counter | A row at the bottom of the settings card totals your focus-mode entries (auto-entries included), persisted to `localStorage`; past 100 entries a Star nudge appears — after the first use it is remembered and replaced by a direct "open the project page" button |
 | Esc peels layer by layer | Answer card → input bar → focus mode, one layer per press; Esc mid-IME-composition cancels the composition first |
 | i18n | Chinese / English copy registered under the `focus` namespace, follows the UI language |
-| Plugin configuration card | A collapsible card under "Settings → Plugins → Plugin configuration", preferences persisted to `localStorage`; the Node half registers the same settings namespace (schemastery schema) so the tab dispatches it |
-| First-run onboarding | After installing, the welcome page shows a one-time "Focus Mode" intro (feature overview + in-place configuration) as a `settings.onboarding` step with its own versioned seen-flag |
-| Official preference sync | Reads the official "transcript view" preference (normal / compact); flipping it applies immediately |
+| Plugin configuration | On dsh 0.2 and newer, open this plugin's detail page from the sidebar "Plugins" page — the configuration renders between the package description and its component rows (`plugins.bundle.config`). On dsh ≤ 0.1.x it stays the collapsible "Settings → Plugins → Plugin configuration" card (`settings.plugin.item`). Preferences persist to `localStorage`; the Node half registers the same settings namespace (schemastery schema) |
+| First-run onboarding | After installing, the welcome page shows a one-time "Focus Mode" intro (feature overview + in-place configuration) as a `settings.onboarding` step with its own versioned seen-flag; its "open settings" action jumps to whichever configuration surface the running dsh declares |
+| Official preference sync | Reads the official "transcript view" preference (normal / compact on dsh ≤ 0.1.x; compact / standard / detailed / verbose on dsh 0.2); flipping it applies immediately |
 | Render error boundary | The overlay content is wrapped in an error boundary: one render crash never bricks the Focus button — the next open retries |
 | DSH-better-sidebar compatibility | While in focus, a `<body>` marker makes the package stylesheet hide better-sidebar's top-right panel toggles and any open right/bottom panels (and release the squeezed layout); restored on exit |
 | Legacy compatibility mode | On dsh < 0.1.2 missing the new services, the overlay degrades gracefully (legacy snapshot adapters) with a one-time console notice — no crash |
+| Cross-release primitive compatibility | Official primitives renamed between major releases fall back by availability (dsh 0.2 removed the fixed-size `…14` / `…16` icons in favour of `…Regular` + `size`), so an `undefined` component can never throw React #130 |
 
 ## Install
 
@@ -120,7 +121,7 @@ dsh web
 
 Restart `dsh web` after install.
 
-> **First run**: after restarting, the welcome page shows a one-time "Focus Mode" intro that explains the features and lets you configure them in place; all of these settings can be changed anytime in "Settings → Plugins → Plugin configuration".
+> **First run**: after restarting, the welcome page shows a one-time "Focus Mode" intro that explains the features and lets you configure them in place; all of these settings can be changed anytime — on newer dsh open this plugin's detail page from the sidebar "Plugins" page, on older dsh use "Settings → Plugins → Plugin configuration".
 
 ## Usage
 
@@ -134,7 +135,11 @@ Restart `dsh web` after install.
 
 ## Settings
 
-In the sidebar "Settings → Plugins → Plugin configuration", expand the "Focus Mode" card:
+**On dsh 0.2 and newer**: sidebar "Plugins" page → find `dsh-focus-overlay` → the configuration shows on its detail page, between the package description and the component rows.
+
+**On dsh ≤ 0.1.x**: sidebar "Settings → Plugins → Plugin configuration" → expand the "Focus Mode" card.
+
+Both locations present the same options:
 
 | Option | Description |
 | --- | --- |
