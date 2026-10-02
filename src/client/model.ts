@@ -33,6 +33,69 @@ export function pendingInteractionOf(map: any, sessionId: any): any {
   return null
 }
 
+/** dsh 0.2 moved the pending interaction off the uiSession
+ *  `pendingInteractions` map and onto the unified `sessionStatus` snapshot
+ *  (`ReadonlyMap<sessionId, { running, pendingInteraction, completionUnread }>`).
+ *  Both carriers answer with the same interaction face, so the overlay's answer
+ *  card resolves through either. Null when nothing is pending. */
+export function pendingInteractionFromStatus(status: any, sessionId: any): any {
+  try {
+    const entry = status && typeof status.get === 'function' ? status.get(sessionId) : null
+    return (entry && entry.pendingInteraction) || null
+  } catch { /* defensive */ }
+  return null
+}
+
+// ---- dsh 0.2 session-identity adapters ----
+
+/** The current session id, resolved across dsh generations.
+ *
+ *  dsh <= 0.1.x carried the viewer's selection on the session-list snapshot
+ *  (`sessions.list.getSnapshot().current`). dsh 0.2 dropped that field: the
+ *  selection is the session the main view retains, published on the list rows
+ *  themselves (`byId[id].retainedBy.mainView > 0`) — the same public read the
+ *  official cordis inspector uses. `mainBinding` is the uiSession main-binding
+ *  snapshot, kept as a guarded last resort: it carries the same id, but that
+ *  member is typed private, so the public list data stays primary. */
+export function currentSessionIdOf(listState: any, mainBinding?: any): any {
+  const fromList = listState ? listState.current : undefined
+  if (fromList !== undefined && fromList !== null) return fromList
+  const byId = listState && listState.byId
+  if (byId && typeof byId === 'object') {
+    for (const row of Object.values(byId) as any[]) {
+      if (row && ((row.retainedBy && row.retainedBy.mainView) || 0) > 0) return row.id
+    }
+  }
+  if (mainBinding) {
+    const id = mainBinding.key ?? (mainBinding.props ? mainBinding.props.sessionId : undefined)
+    if (id !== undefined && id !== null) return id
+  }
+  return undefined
+}
+
+// ---- dsh 0.2 official transcript-view preference ----
+
+/** The overlay fold mode derived from the official "对话显示" preference.
+ *
+ *  dsh <= 0.1.x served it through the `settingsScope` service bound to the
+ *  `ui-chat` namespace (`{ transcriptView: 'normal' | 'compact' }`). dsh 0.2
+ *  retired `settingsScope`; the same preference is a Host settings field read
+ *  through `configForms.get('ui-chat')`, whose snapshot nests it under `value`
+ *  (and widened the accepted set to compact | standard | detailed | verbose,
+ *  with `normal` / `expanded` kept as legacy saved values). Only `compact`
+ *  folds the tool flow; every other explicit mode reads as the expanded
+ *  presentation. Absence keeps the overlay's own compact default. */
+export function transcriptViewOf(scopeOrForm: any): 'normal' | 'compact' {
+  try {
+    if (!scopeOrForm || typeof scopeOrForm.getSnapshot !== 'function') return 'compact'
+    const snapshot = scopeOrForm.getSnapshot()
+    const section = snapshot && snapshot.value && typeof snapshot.value === 'object' ? snapshot.value : snapshot
+    const mode = section ? section.transcriptView : null
+    if (mode === undefined || mode === null) return 'compact'
+    return mode === 'compact' ? 'compact' : 'normal'
+  } catch { return 'compact' }
+}
+
 /** Legacy pending interaction — pre-0.1.2 dsh carried a flat `pending` array
  *  on the session snapshot, with a different carrier shape (`payload`
  *  envelope, answers via `wait.respond({ok, value})` returning a `receipt`).
@@ -71,6 +134,31 @@ export function legacyPendingOf(snap: any): any {
       })
   }
   return shaped
+}
+
+// ---- dsh 0.2 file-resource addressing ----
+
+/** Build the `dsh-resource://file/session/<id>/<path>` address that dsh 0.2's
+ *  Sidebar resource controller opens a file through.
+ *
+ *  The official `fileAddressFor` lives in `@deepseek-ai/dsh-util-workspace-path`,
+ *  but the client bundle purity gate keeps feature bundles from importing other
+ *  plugins' values across the boundary — the official Chat package inlines its
+ *  own copy of the same grammar, and so does this one. Absolute paths inside the
+ *  session workspace are reduced to workspace-relative; every id and path
+ *  segment is component-encoded, with `:` kept literal for Windows drives. */
+export function sessionFileAddressOf(sessionId: string, cwd: string | undefined, path: string): string {
+  const encode = (segment: string) => encodeURIComponent(segment).replace(/%3A/gi, ':')
+  const normalized = String(path).replace(/\\/g, '/').replace(/^(?:\.\/)+/, '')
+  const absolute = normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)
+  let relative = normalized
+  if (absolute) {
+    const root = cwd === undefined || cwd === null ? '' : String(cwd).replace(/\\/g, '/').replace(/\/+$/, '')
+    if (root !== '' && normalized === root) relative = ''
+    else if (root !== '' && normalized.startsWith(root + '/')) relative = normalized.slice(root.length + 1)
+  }
+  const body = relative.split('/').map(encode).join('/')
+  return `dsh-resource://file/session/${encode(String(sessionId))}/${body}`
 }
 
 // ---- text helpers ----

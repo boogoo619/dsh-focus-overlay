@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Component, type ReactNode } from 'react'
-import { MarkdownText, projectUserText, Button, Modal, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, projectUserText, Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDown } from './icons'
 import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
 import { markdownLabels } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, pendingInteractionFromStatus, currentSessionIdOf, transcriptViewOf, sessionFileAddressOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 import { celebrateThenOpen } from './celebrate'
 import { TurnRail, type RailItem } from './TurnRail'
@@ -105,13 +106,16 @@ function useSessionSnapshot(sessions: any, sessionId: any): any {
 }
 
 /** The session's pending user interaction (question / plan review / approval),
- *  read from the uiSession pending-interactions map — dsh 0.1.2 moved the old
- *  snapshot `pending` array into this root-level observable. When the service
- *  is absent (older dsh), falls back to the session snapshot's flat `pending`
- *  array through the `legacyPendingOf` adapter. Returns null when this session
- *  has nothing pending. */
+ *  read from the uiSession services. dsh 0.1.2 exposed the root-level
+ *  `pendingInteractions` map; dsh 0.2 unified it into `sessionStatus`
+ *  (`ReadonlyMap<sessionId, { running, pendingInteraction, completionUnread }>`).
+ *  When neither service is present (older dsh), falls back to the session
+ *  snapshot's flat `pending` array through the `legacyPendingOf` adapter.
+ *  Returns null when this session has nothing pending. */
 function usePendingInteraction(uiSession: any, sessionId: any, snap: any): any {
-  const source = uiSession && uiSession.pendingInteractions
+  const legacyMap = uiSession && uiSession.pendingInteractions
+  const statusMap = uiSession && uiSession.sessionStatus
+  const source = legacyMap || statusMap
   const read = () => { try { return source ? source.getSnapshot() : null } catch { return null } }
   const [map, setMap] = useState<any>(read)
   useEffect(() => {
@@ -119,8 +123,34 @@ function usePendingInteraction(uiSession: any, sessionId: any, snap: any): any {
     setMap(source.getSnapshot())
     try { return source.subscribe(() => setMap(source.getSnapshot())) } catch { return }
   }, [source])
-  const modern = pendingInteractionOf(map, sessionId)
+  const modern = legacyMap ? pendingInteractionOf(map, sessionId) : pendingInteractionFromStatus(map, sessionId)
   return modern || legacyPendingOf(snap)
+}
+
+/** The viewed session id, resolved across dsh generations. dsh <= 0.1.x carried
+ *  the selection on the session-list snapshot (`listState.current`); dsh 0.2
+ *  dropped it and publishes the main view's retained session as the uiSession
+ *  main binding. Subscribes to whichever source exists (both, when both do), so
+ *  switching sessions re-resolves either way. */
+function useCurrentSessionId(sessions: any, uiSession: any, listState: any): any {
+  const read = () => {
+    if (!sessions || typeof sessions.list?.getSnapshot !== 'function') return undefined
+    let mainBinding: any = null
+    try { mainBinding = uiSession && uiSession.current ? uiSession.current.getSnapshot() : null } catch { mainBinding = null }
+    return currentSessionIdOf(sessions.list.getSnapshot(), mainBinding)
+  }
+  const [id, setId] = useState<any>(read)
+  useEffect(() => {
+    if (!sessions || typeof sessions.list?.subscribe !== 'function') { setId(undefined); return }
+    const sync = () => setId(read())
+    sync()
+    const unsubs: Array<() => void> = []
+    try { unsubs.push(sessions.list.subscribe(sync)) } catch { /* defensive */ }
+    const main = uiSession && uiSession.current
+    if (main && typeof main.subscribe === 'function') { try { unsubs.push(main.subscribe(sync)) } catch { /* defensive */ } }
+    return () => { for (const u of unsubs) { try { u() } catch { /* defensive */ } } }
+  }, [sessions, uiSession])
+  return id
 }
 
 /** The session's Chat view snapshot (dsh 0.1.2 `ChatSnapshot`) from the
@@ -143,19 +173,21 @@ function useChatView(uiConversation: any, sessionId: any): any {
   return chat
 }
 
-/** The official "对话显示" preference (`ui-chat.transcriptView`, values
- *  normal | compact), read reactively from the settings scope the official
- *  TranscriptViewPolicy binds. Defaults to compact — the official default —
- *  when the scope or the section has not arrived yet. */
-function useTranscriptViewMode(settingsScope: any): 'normal' | 'compact' {
-  const source = settingsScope
-  const read = (): 'normal' | 'compact' => {
-    try {
-      const section = source ? source.getSnapshot().value : null
-      const mode = section ? section.transcriptView : null
-      return mode === 'normal' ? 'normal' : 'compact'
-    } catch { return 'compact' }
-  }
+/** The official "对话显示" preference (`ui-chat.transcriptView`), read
+ *  reactively. dsh <= 0.1.x serves it through the settings scope the official
+ *  TranscriptViewPolicy binds (values normal | compact); dsh 0.2 retired that
+ *  service and serves the same field through the `configForms` controller for
+ *  the `ui-chat` namespace (compact | standard | detailed | verbose, with the
+ *  legacy normal | expanded values still accepted). Both are read through the
+ *  shared `transcriptViewOf` projection; only `compact` folds the tool flow.
+ *  Defaults to compact when no preference has arrived yet. */
+function useTranscriptViewMode(settingsScope: any, configForms: any): 'normal' | 'compact' {
+  const form = useMemo(() => {
+    if (settingsScope) return settingsScope
+    try { return configForms && typeof configForms.get === 'function' ? configForms.get('ui-chat') : null } catch { return null }
+  }, [settingsScope, configForms])
+  const source = form && typeof form.getSnapshot === 'function' ? form : null
+  const read = (): 'normal' | 'compact' => transcriptViewOf(source)
   const [mode, setMode] = useState<'normal' | 'compact'>(read)
   useEffect(() => {
     if (!source) { setMode('compact'); return }
@@ -209,15 +241,15 @@ function composerEditable(seat: HTMLElement | null): HTMLElement | null {
 }
 
 function FocusContent(props: any) {
-  const { useSessions, sessions, workspaces, conversation, chatFileMentions, uiSession, uiConversation, settingsScope, t } = props
+  const { useSessions, sessions, workspaces, conversation, chatFileMentions, uiSession, uiConversation, settingsScope, configForms, sidebarRight, t } = props
   const prefs = usePrefs()
   const listState = useSessions((s: any) => s)
-  const currentId = listState ? listState.current : undefined
+  const currentId = useCurrentSessionId(sessions, uiSession, listState)
   const snap = useSessionSnapshot(sessions, currentId)
   // dsh 0.1.2: conversation content lives in the chat view's legacy slice;
   // the session snapshot itself keeps only lifecycle/control state.
   const chatView = useChatView(uiConversation, currentId)
-  const transcriptView = useTranscriptViewMode(settingsScope)
+  const transcriptView = useTranscriptViewMode(settingsScope, configForms)
   const legacy = useMemo(() => legacySliceOf(chatView, snap), [chatView, snap])
       // `stable` = the streaming tail has drained (partial null): only a stable
     // snapshot lets the LAST turn fold — while streaming it stays normal-form.
@@ -610,16 +642,39 @@ function FocusContent(props: any) {
     return Promise.reject(new Error('dsh-focus-overlay: image resolver unavailable'))
   }
 
+  // Open a mentioned file from an assistant row. dsh <= 0.1.x opened the path
+  // through the workspace controller's `openPath`; dsh 0.2 removed that verb
+  // (its `workspaces` service is the pure controller) and opens files through
+  // the Sidebar resource controller on a `dsh-resource://file/…` address. The
+  // legacy verb is therefore also the version discriminator: prefer it when it
+  // exists so old builds keep their proven path, and never let a click inside
+  // the renderer throw.
+  const openMentionedFile = useCallback((path: string, options?: any) => {
+    try {
+      if (workspaces && typeof workspaces.openPath === 'function') {
+        workspaces.openPath(path).catch(() => {})
+        return
+      }
+      const cwd = currentId != null ? sessions?.list?.getSnapshot?.()?.byId?.[currentId]?.cwd : undefined
+      if (sidebarRight && currentId != null && typeof sidebarRight.openResource === 'function') {
+        const address = sessionFileAddressOf(String(currentId), cwd, path)
+        sidebarRight.openResource(address, options && options.line !== undefined ? { params: { line: options.line } } : undefined)
+      }
+    } catch { /* a mention click degrades to a no-op, never a render crash */ }
+  }, [sidebarRight, workspaces, sessions, currentId])
+
   const fileMentionsFor = useCallback((node: any): any => {
     if (!chatFileMentions) return undefined
     try {
+      // dsh 0.2 widened the signature to (owner, sessionId); the 0.1.x call
+      // ignores the extra argument, so both shapes are satisfied at once.
       return chatFileMentions.forClosing({
         turn: { turn: node.turn, step: node.step },
         seq: node.seq,
-        openFile: (path: string) => { if (workspaces) workspaces.openPath(path).catch(() => {}) },
-      })
+        openFile: (path: string, options?: any) => openMentionedFile(path, options),
+      }, currentId)
     } catch { return undefined }
-  }, [chatFileMentions, workspaces])
+  }, [chatFileMentions, currentId, openMentionedFile])
 
   // ---- bottom dock wiring ----
   // The bar shares the MAIN composer's draft through the official per-session
@@ -908,7 +963,7 @@ function FocusContent(props: any) {
                 onClick={toggle}
               >
                 <span className="fm-process-label">{processLabel(it.counts, t)}</span>
-                <IconChevronDownOutline14 className="fm-process-chevron" />
+                <IconChevronDown className="fm-process-chevron" />
               </button>
             ) : null}
             {open ? it.workItems.map((wi: any, wi2: number) => renderItem(wi, key + '-w' + wi2, false)) : null}
@@ -1160,6 +1215,21 @@ function FocusEntryStat({ t }: { t: FocusTranslate }) {
   )
 }
 
+/** The settings body both plugin-settings surfaces share: the preference
+ *  fields plus the focus-entry counter. Rendered by the legacy Settings card
+ *  and by the dsh 0.2 Plugins-page bundle page. */
+function FocusSettingsBody({ t }: { t: FocusTranslate }) {
+  return (
+    <>
+      <FocusPrefsFields t={t} />
+      <FocusEntryStat t={t} />
+    </>
+  )
+}
+
+/** Legacy surface (dsh <= 0.1.x): a collapsible `<li>` card in the Settings
+ *  → Plugins tab, registered into the keyed `settings.plugin.item` slot. dsh
+ *  0.2 removed that slot, so this only renders where the slot is declared. */
 export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
   const [open, setOpen] = useState(false)
   const title = t('settings.label')
@@ -1176,15 +1246,27 @@ export function FocusSettingsCard({ t }: { t: FocusTranslate }) {
           <span className="fm-plugin-card-name">{title}</span>
           <span className="fm-plugin-card-desc">{t('settings.description')}</span>
         </span>
-        <IconChevronDownOutline14 className={'fm-plugin-card-chevron' + (open ? ' fm-plugin-card-chevron-open' : '')} />
+        <IconChevronDown className={'fm-plugin-card-chevron' + (open ? ' fm-plugin-card-chevron-open' : '')} />
       </button>
       {open ? (
         <div className="fm-plugin-card-body">
-          <FocusPrefsFields t={t} />
-          <FocusEntryStat t={t} />
+          <FocusSettingsBody t={t} />
         </div>
       ) : null}
     </li>
+  )
+}
+
+/** dsh 0.2 surface: the bundle's own configuration on the sidebar Plugins
+ *  page (`plugins.bundle.config`, keyed by the bundle's package name). The page
+ *  draws the title, icon, and crumb itself and always asks for `view: 'page'`,
+ *  so this renders the body alone — no card chrome, no collapse. */
+export function FocusBundleConfig({ t, view }: { t: FocusTranslate; view?: string }) {
+  if (view !== undefined && view !== 'page') return null
+  return (
+    <div className="fm-plugin-page">
+      <FocusSettingsBody t={t} />
+    </div>
   )
 }
 
@@ -1215,9 +1297,19 @@ export function FocusOnboarding(props: any) {
   if (done) return null
 
   const dismiss = () => { onboardingStore.markDone(); setDone(true); finish() }
-  // Dismiss first (removes #root inert) and then open the Plugins section, so the
-  // settings panel is not rendered inert behind this modal.
-  const goSettings = () => { onboardingStore.markDone(); setDone(true); finish(); openSection('plugins') }
+  // Dismiss first (removes #root inert) and then open the settings surface, so
+  // the panel is not rendered inert behind this modal. dsh 0.2 passes
+  // `openSettings`, which opens the sidebar Plugins page on this bundle's
+  // detail (where the configuration now lives); when it is absent or fails,
+  // the coordinator's `openSection` still reaches the Settings → Plugins tab.
+  const goSettings = () => {
+    onboardingStore.markDone(); setDone(true); finish()
+    let opened = false
+    if (typeof props.openSettings === 'function') {
+      try { opened = props.openSettings() !== false } catch { opened = false }
+    }
+    if (!opened && typeof openSection === 'function') openSection('plugins')
+  }
   const features = ['fullscreen', 'fold', 'navbar', 'autoFocus', 'hotkey']
 
   return (

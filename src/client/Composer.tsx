@@ -22,7 +22,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MutableRefObject, ChangeEvent as ReactChangeEvent, CompositionEvent as ReactCompositionEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Button, IconCheckOutline14, IconChevronDownOutline14, IconEditOutline16, IconSendOutline14, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheck, IconChevronDown, IconEdit, IconSend } from './icons'
 import { markdownLabels, type FocusTranslate } from './locales'
 import { allAnswered, encodeAnswer, parseRecommendedLabel, type AnswerDraft } from './model'
 
@@ -77,7 +78,7 @@ function OptionRow(props: {
   return (
     <button type="button" className={'fm-opt' + (on ? ' fm-opt-on' : '')} onClick={onToggle} aria-pressed={on}>
       {multi ? (
-        <span className={'fm-opt-check' + (on ? ' fm-opt-check-on' : '')}>{on ? <IconCheckOutline14 /> : null}</span>
+        <span className={'fm-opt-check' + (on ? ' fm-opt-check-on' : '')}>{on ? <IconCheck /> : null}</span>
       ) : (
         <span className="fm-opt-num">{index + 1}</span>
       )}
@@ -175,7 +176,7 @@ function AnswerCard(props: {
             <h3 className="fm-card-title">{isPlanReview ? t('answer.planTitle') : t('answer.title')}</h3>
           </div>
           <button type="button" className="fm-card-close" title={t('answer.close')} aria-label={t('answer.close')} onClick={onClose}>
-            <IconChevronDownOutline14 />
+            <IconChevronDown />
           </button>
         </div>
       ) : (
@@ -183,7 +184,7 @@ function AnswerCard(props: {
           <span className="fm-card-dot" />
           <span className="fm-card-strip-title">{t('answer.approvalTitle')}</span>
           <button type="button" className="fm-card-close" title={t('answer.close')} aria-label={t('answer.close')} onClick={onClose}>
-            <IconChevronDownOutline14 />
+            <IconChevronDown />
           </button>
         </div>
       )}
@@ -376,7 +377,7 @@ function InputBar(props: {
   return (
     // Official InputBar card language: input-major surface, 22px radius,
     // shadow-lv2, 16/24 textarea, and the 34px round info-fill send button
-    // with the official up-arrow glyph (IconSendOutline14). No collapse
+    // with the official up-arrow glyph (see ./icons). No collapse
     // button: a draft-bearing bar folds itself into the pill on blur — the
     // send button swallows its own mousedown so a click never blurs first.
     <div className="fm-bar" style={{ maxWidth: Math.min(width, 680) }}>
@@ -426,7 +427,7 @@ function InputBar(props: {
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSend}
         >
-          <IconSendOutline14 />
+          <IconSend />
         </button>
       </div>
     </div>
@@ -480,7 +481,7 @@ export function FocusBottomDock(props: {
     const hasDraft = draft.trim() !== ''
     return (
       <button type="button" className="fm-pill" title={t('composer.expand')} aria-label={t('composer.expand')} onClick={onExpand}>
-        <IconEditOutline16 />
+        <IconEdit />
         {hasDraft ? <span className="fm-pill-dot" /> : null}
       </button>
     )
@@ -490,7 +491,7 @@ export function FocusBottomDock(props: {
   // collapsed dock form; only the glyph differs.
   return (
     <button type="button" className="fm-pill" title={t('backToLatest')} aria-label={t('backToLatest')} onClick={onJumpBottom}>
-      <IconChevronDownOutline14 size={16} />
+      <IconChevronDown size={16} />
     </button>
   )
 }

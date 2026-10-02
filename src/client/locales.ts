@@ -82,7 +82,7 @@ export const zh = {
   'onboarding.feature.autoFocus': '自动专注与提醒 —— 回复完成自动进入专注，AI 提问 / 等待时提醒',
   'onboarding.feature.hotkey': '快捷键 F —— 任意界面按 F 一键进入专注，可在设置中关闭',
   'onboarding.configure.title': '快速配置',
-  'onboarding.laterNote': '这些设置随时可在「设置 → 插件 → 插件配置」中更改。',
+  'onboarding.laterNote': '这些设置随时可以更改：新版 dsh 在侧栏「Plugins」页面中打开本插件的详情页，旧版在「设置 → 插件 → 插件配置」中。',
   'onboarding.openSettings': '打开设置',
   'onboarding.done': '完成',
 }
@@ -169,7 +169,7 @@ export const en = {
   'onboarding.feature.autoFocus': 'Auto-focus & reminders — auto-enter after a reply, notify while the AI waits',
   'onboarding.feature.hotkey': 'Hotkey F — press F anywhere to enter focus mode (toggleable in settings)',
   'onboarding.configure.title': 'Quick setup',
-  'onboarding.laterNote': 'You can change these anytime in Settings → Plugins → Plugin configuration.',
+  'onboarding.laterNote': 'Change these anytime: on newer dsh open this plugin’s detail page from the sidebar Plugins page; on older dsh use Settings → Plugins → Plugin configuration.',
   'onboarding.openSettings': 'Open settings',
   'onboarding.done': 'Done',
 }

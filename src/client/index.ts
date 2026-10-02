@@ -1,20 +1,28 @@
 /**
  * Focus Mode, browser half: a full-screen reading overlay in `shell.overlay`
  * (additive, never replaces shipped UI), a "专注" button in the session header
- * action row, and a collapsible plugin card in the Plugins settings tab
- * (`settings.plugin.item`). Rendering reuses the official client UI primitives
- * module (`@deepseek-ai/dsh-client-ui-primitives` runtime id) — Markdown /
- * projectUserText / Tooltip / Button — plus the conversation service's composer
- * registry and the uiSession pending-interaction service (dsh 0.1.2).
+ * action row, and the plugin's settings card. The settings surface lives where
+ * the running dsh keeps it: the Settings → Plugins tab's keyed
+ * `settings.plugin.item` slot on dsh <= 0.1.x, and the sidebar Plugins page's
+ * `plugins.bundle.config` slot (keyed by this bundle's package name) on dsh
+ * 0.2, which retired both that slot and the `settingsScope` service. Rendering
+ * reuses the official client UI primitives module
+ * (`@deepseek-ai/dsh-client-ui-primitives` runtime id) — Markdown /
+ * projectUserText / Button — plus the conversation service's composer registry
+ * and the uiSession pending-interaction / main-binding service.
  */
 import { createElement } from 'react'
-import { FocusOverlay, FocusSettingsCard, FocusToggle, FocusOnboarding, focusStore } from './FocusView'
+import { FocusOverlay, FocusSettingsCard, FocusBundleConfig, FocusToggle, FocusOnboarding, focusStore } from './FocusView'
 import { FOCUS_CSS } from './styles'
 import { zh, en } from './locales'
 import { prefsStore } from './settings'
-import { detectSettledCompletion, hotkeyShouldEnter, legacySliceOf } from './model'
+import { currentSessionIdOf, detectSettledCompletion, hotkeyShouldEnter, legacySliceOf } from './model'
 
 const NS = 'focus'
+
+/** This bundle's package name — the key `plugins.bundle.config` and the
+ *  `pluginNavigation.openBundle` deep link address this plugin by (dsh 0.2). */
+const PACKAGE_NAME = 'dsh-focus-overlay'
 
 // One-time notice when the dsh 0.1.2+ services are absent so the degraded
 // legacy-compatibility mode is visible in the console instead of silent.
@@ -27,7 +35,9 @@ function warnLegacyOnce() {
 
 export default {
   name: 'dsh-focus-overlay-client',
-  inject: ['slots', 'sessions', 'locale', 'workspaces', 'uiSession', 'uiConversation', 'settingsScope'],
+  // `settingsScope` was removed from the DSH 0.2 client service registry.
+  // Read it opportunistically below so the overlay remains usable without it.
+  inject: ['slots', 'sessions', 'locale', 'workspaces', 'uiSession', 'uiConversation'],
   apply(ctx: any) {
     // Package-owned stylesheet (removed with the plugin on unload).
     const style = document.createElement('style')
@@ -63,19 +73,26 @@ export default {
     const workspaces = ctx.workspaces
     const conversation = ctx.get('conversation')
     const chatFileMentions = ctx.get('chatFileMentions')
+    // dsh 0.2 opens a mentioned file through the Sidebar resource controller
+    // (`openResource` on a `dsh-resource://file/…` address); older dsh has no
+    // such service and the overlay falls back to the workspace controller.
+    const sidebarRight = ctx.get('sidebarRight')
     // dsh 0.1.2: pending user interactions (question / plan review / approval)
     // moved from the session snapshot into this root-level uiSession service,
     // and conversation content into the uiConversation chat view assembly.
     const uiSession = ctx.get('uiSession')
     const uiConversation = ctx.get('uiConversation')
     if (!uiSession || !uiConversation) warnLegacyOnce()
-    // Official "对话显示" preference (ui-chat.transcriptView): bind the same
-    // settings scope the chat target's TranscriptViewPolicy binds.
+    // Official "对话显示" preference (ui-chat.transcriptView). dsh <= 0.1.x
+    // serves it through a bound `settingsScope`; dsh 0.2 retired that service
+    // and serves the same field through `configForms.get('ui-chat')`. Both are
+    // read opportunistically — neither is required for the overlay to work.
     let settingsScope: any = null
     try {
       const binder = ctx.get('settingsScope')
       settingsScope = binder && typeof binder.bind === 'function' ? binder.bind({ namespace: 'ui-chat' }) : null
     } catch { settingsScope = null }
+    const configForms = ctx.get('configForms')
 
     // Auto-focus: watch the *current* session's running bit. When a reply
     // settles normally (running true → false + finalized, non-interrupted
@@ -151,15 +168,34 @@ export default {
         if (!unsubChat) chatSlice = legacySliceOf(null, face.getSnapshot())
       }
 
+      // Resolve the viewed session across generations: dsh <= 0.1.x carries it
+      // on the session-list snapshot; dsh 0.2 publishes it as the uiSession
+      // main binding (the session the main view retains). Both sources are
+      // subscribed below, so a switch on either shape is observed.
+      const mainBinding = () => {
+        try { return uiSession && uiSession.current ? uiSession.current.getSnapshot() : null } catch { return null }
+      }
       const onList = () => {
-        const ls = sessions.list.getSnapshot()
-        const next = ls ? ls.current : undefined
+        const next = currentSessionIdOf(sessions.list.getSnapshot(), mainBinding())
         if (next !== currentId) { currentId = next; watch(next) }
+        // Same id, no live subscription: the binding materialized after the id
+        // first resolved (dsh 0.2 retains the main-view session asynchronously).
+        // Retry so a late binding is still watched.
+        else if (next != null && !unsubSession) watch(next)
       }
       onList()
       const unsubList = sessions.list.subscribe(onList)
+      const mainSource = uiSession && uiSession.current
+      const unsubMain = mainSource && typeof mainSource.subscribe === 'function'
+        ? mainSource.subscribe(onList)
+        : null
 
-      return () => { if (unsubList) unsubList(); if (unsubSession) unsubSession(); if (unsubChat) unsubChat() }
+      return () => {
+        if (unsubList) unsubList()
+        if (unsubMain) unsubMain()
+        if (unsubSession) unsubSession()
+        if (unsubChat) unsubChat()
+      }
     })
 
     // F hotkey: enter focus mode from anywhere. The guard rails (pref on, no
@@ -187,7 +223,7 @@ export default {
 
     ctx.slots.inject('shell.overlay', () => ctx.slots.register(
       { name: 'shell.overlay', id: 'focus-mode-overlay', order: 1000 },
-      (props: any) => createElement(FocusOverlay, { ...props, sessions, workspaces, conversation, chatFileMentions, uiSession, uiConversation, settingsScope, t }),
+      (props: any) => createElement(FocusOverlay, { ...props, sessions, workspaces, conversation, chatFileMentions, uiSession, uiConversation, settingsScope, configForms, sidebarRight, t }),
     ))
 
     ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
@@ -195,13 +231,17 @@ export default {
       () => createElement(FocusToggle, { t }),
     ))
 
-    // `settings.plugin.item` changed shape between dsh 0.1.0-rc.6 and rc.7: it
-    // was a *list* slot (options `id`/`order`) before, and became a *keyed* slot
-    // (option `key`, the settings namespace) from rc.7 onward. `SlotCore.register`
-    // only requires the option its `kind` names and ignores the rest, so we
-    // register both shapes at once: `key` satisfies the keyed tab (it must equal
-    // the namespace the Node half serves), while `id`/`order` keep the card
-    // rendering on the older list-slot dsh.
+    // Plugin configuration lives where the running dsh keeps it. Both
+    // `slots.inject` waits fire only for a declared slot, so exactly one of
+    // these surfaces exists per dsh generation and neither can break the other.
+    //
+    // dsh <= 0.1.x — the Settings → Plugins tab. `settings.plugin.item` changed
+    // shape between dsh 0.1.0-rc.6 and rc.7: a *list* slot (options `id`/`order`)
+    // before, a *keyed* slot (option `key`, the settings namespace) from rc.7.
+    // `SlotCore.register` only requires the option its `kind` names and ignores
+    // the rest, so this registers both shapes at once: `key` satisfies the keyed
+    // tab (it must equal the namespace the Node half serves), while `id`/`order`
+    // keep the card rendering on the older list-slot dsh.
     ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
       {
         name: 'settings.plugin.item',
@@ -212,20 +252,41 @@ export default {
       () => createElement(FocusSettingsCard, { t }),
     ))
 
+    // dsh 0.2 — the sidebar Plugins page moved plugin configuration out of
+    // Settings. A bundle registers its own page into the keyed
+    // `plugins.bundle.config` slot, keyed by npm package name; registering also
+    // puts the "configured" section on this bundle's detail page. The page draws
+    // the title/icon/crumb and asks for `view: 'page'` only.
+    ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register(
+      { name: 'plugins.bundle.config', key: PACKAGE_NAME },
+      (props: any) => createElement(FocusBundleConfig, { ...props, t }),
+    ))
+
+    // Deep link used by the first-run intro's "open settings" action on dsh 0.2:
+    // the Plugins page's own navigation service opens this bundle's detail page.
+    // Returns false where the service is absent or the open fails, so the intro
+    // can fall back to the Settings section on older dsh.
+    const pluginNavigation = ctx.get('pluginNavigation')
+    const openSettings = pluginNavigation && typeof pluginNavigation.openBundle === 'function'
+      ? () => { try { pluginNavigation.openBundle(PACKAGE_NAME); return true } catch { return false } }
+      : undefined
+
     // First-run onboarding: on the empty hero (no/blank session) show a one-time
     // intro — feature overview + the same prefs as the settings card — and let
-    // the user jump straight to "Settings → Plugins → Plugin configuration".
-    // The step persists its own "seen" flag (localStorage); the coordinator's
-    // completed set is component-local, so the step skips itself via complete()
-    // once seen. On dsh versions without `settings.onboarding` the inject never
-    // fires and the intro simply never appears (no crash).
+    // the user jump straight to the plugin's configuration page (the Settings
+    // → Plugins → Plugin configuration card on dsh <= 0.1.x, the sidebar
+    // Plugins page's bundle detail on dsh 0.2). The step persists its own "seen"
+    // flag (localStorage); the coordinator's completed set is component-local,
+    // so the step skips itself via complete() once seen. On dsh versions without
+    // `settings.onboarding` the inject never fires and the intro simply never
+    // appears (no crash).
     ctx.slots.inject('settings.onboarding', () => ctx.slots.register(
       {
         name: 'settings.onboarding',
         id: 'dsh-focus-overlay',
         order: 10,
       },
-      (props: any) => createElement(FocusOnboarding, { ...props, t }),
+      (props: any) => createElement(FocusOnboarding, { ...props, t, openSettings }),
     ))
   },
 }

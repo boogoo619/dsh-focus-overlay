@@ -162,6 +162,9 @@ export const FOCUS_CSS = `
 .fm-plugin-card-chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}
 .fm-plugin-card-chevron-open{transform:rotate(180deg)}
 .fm-plugin-card-body{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:16px}
+/* dsh 0.2 Plugins-page bundle configuration: the page draws its own title,
+   icon and crumb, so this surface is body-only — no card border or collapse. */
+.fm-plugin-page{flex-direction:column;display:flex}
 .fm-plugin-field{flex-direction:column;gap:6px;padding:12px 0;display:flex}
 .fm-plugin-field+.fm-plugin-field{border-top:1px solid var(--dsw-alias-border-l2)}
 /* The stats row ends the card body, so it carries NO bottom padding of its
