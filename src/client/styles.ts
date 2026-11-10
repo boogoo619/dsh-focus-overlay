@@ -2,7 +2,34 @@
 import { LIFT_MAX_WIDTH } from './model'
 
 export const FOCUS_CSS = `
-.fm-overlay{position:fixed;inset:0;z-index:2147483000;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
+.fm-overlay{position:fixed;inset:0;z-index:2147483000;box-sizing:border-box;padding-top:var(--dsh-frame-overlay-top,0px);background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
+/* Desktop window frame (dsh desktop 0.2.2+, macOS and Windows): the shell's
+   hidden native titlebar area is web content owned by whatever fills the
+   viewport, so this overlay reserves it via *.fm-overlay's padding-top and
+   provides the drag surface itself. Heights come from the official layout
+   variables set on <html> by dsh-client-ui-layout (+ the desktop preload for
+   --dsh-windows-titlebar-height); the 0px fallback keeps the plain web
+   generation pixel-identical. On macOS the shell's own
+   [data-window-drag]{-webkit-app-region:drag} applies; the explicit
+   app-region also makes the strip draggable in the Windows renderer.
+   pointer-events stays enabled: a drag region must be hit-testable. */
+.fm-frame-strip{position:absolute;top:0;left:0;right:0;height:var(--dsh-frame-overlay-top,0px);flex:none;-webkit-app-region:drag;-webkit-user-select:none;user-select:none;z-index:0}
+/* Windows desktop: dsh-client-ui-sidebar promotes the sidebar collapse toggle
+   to a fixed z-30 layer itself, above the official shell.overlay layer (z-20)
+   that hosts this overlay — so without this rule the toggle floats above focus
+   mode inside the titlebar band and steals clicks/drags from the drag strip
+   (macOS keeps it behind the overlay). Hide it exactly while focus is on; it
+   comes back with the rest of the chrome when focus exits. */
+html[data-windows-titlebar] body[data-fm-focus] [data-sidebar-toggle]{display:none!important}
+/* Same Windows titlebar band: when the official sidebar is collapsed (user
+   collapsed it, or the window is narrower than 768px — Windows has no drawer),
+   dsh-client-ui-sidebar promotes its "new session" control to the same fixed
+   z-30 titlebar layer (left:48px, top:6px). It would sit above the overlay and
+   click-through would start a new session under the reader, so hide it with
+   the rest of the window chrome while focus is on. The hashed class name is
+   the only stable hook the shipped CSS exposes; the e2e desktop-frame leak
+   guard fails loudly if a future build renames it. */
+html[data-windows-titlebar] body[data-fm-focus] [class*="newSession"]{display:none!important}
 .fm-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));flex:0 0 auto}
 .fm-title{font-size:calc(14px + var(--dsh-content-font-delta,0px));font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-body-wrap{position:relative;flex:1 1 auto;display:flex;min-height:0}

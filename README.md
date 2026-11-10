@@ -3,7 +3,7 @@
 <p align="center">中文 | <a href="README.en.md">English</a></p>
 
 <p align="center">
-  为 DeepSeek Harness（DSH）Web GUI 提供的<b>专注模式</b>：一键进入全屏阅读遮罩，隐藏标题区、输入区与侧栏，把 AI 的工具调用过程折叠成官方样式的计数摘要，只保留「你与 AI 的对话」本身。<br>
+  为 DeepSeek Harness（DSH）Web GUI 与桌面版（macOS / Windows）提供的<b>专注模式</b>：一键进入全屏阅读遮罩，隐藏标题区、输入区与侧栏，把 AI 的工具调用过程折叠成官方样式的计数摘要，只保留「你与 AI 的对话」本身。<br>
   文本、图片、导航条、宽度调节与答题卡均复用或 1:1 复刻官方组件，观感与聊天视图一致。
 </p>
 
@@ -24,6 +24,7 @@
 - **自动专注与提醒** —— 回复正常完成后可自动进入专注并定位到你的提问；专注中收到新回复、或 AI 等待你回答时弹出提醒
 - **宽度调节** —— 正文两侧的拖拽把手（官方 WidthHandle 复刻），实时拖动阅读列宽并持久化
 - **快捷键 F** —— 任意界面按 `F` 一键进入专注模式，可在设置中关闭；输入框内打字不会误触发
+- **桌面版窗口适配** —— 适配 dsh 桌面版（macOS / Windows）：顶部按官方窗口框架变量为 macOS 红绿灯与 Windows 原生标题栏让出空间，专注时这段顶部空白条可直接拖动窗口，进入全屏后自动收起预留空间
 - **专注计数** —— 设置卡片最底部累计展示你进入专注模式的次数；超过 100 次后出现 GitHub Star 引导，点过一次即被记住，之后提供「前往 GitHub 项目页面」直达按钮
 
 这些功能专为**小屏幕**提供更多内容呈现空间：收起常驻的标题 / 输入区与工具步骤，让有限的屏幕尽可能多地展示对话。
@@ -54,7 +55,9 @@
 | 功能 | 说明 |
 | --- | --- |
 | 全屏专注遮罩 | 经 `shell.overlay` 注册（纯增量、`replaceRisk: none`），覆盖标题区 / 输入区 / 侧栏；顶部只留会话标题与「退出专注」按钮 |
-| 官方渲染原语 | AI 文本走官方 `MarkdownText`（GFM + 代码高亮 + TeX + 代码复制按钮 + 脚注），用户消息走官方 `projectUserText` 投影；按钮、模态、图标均为官方原语 |
+| 官方渲染原语 | AI 文本走官方 `MarkdownText`（GFM + 代码高亮 + TeX + 代码复制按钮 + 脚注）；用户消息按运行版本选择官方用户文本投影：dsh 0.1.2–0.2.0 用 `projectUserText`（纯文本 + `@`/`/` 引用 chip），dsh 0.2.2 桌面版移除了该函数后自动回退到官方 `UserTextRun`（纯文本 run），不会因 `undefined` 组件崩溃；按钮、模态、图标均为官方原语 |
+| 桌面版窗口框架 | 按官方 `--dsh-frame-overlay-top` / `--dsh-frame-top-clearance` / `--dsh-frame-chrome-top` 变量为 macOS 红绿灯（≈48px）与 Windows 原生标题栏（40px）预留顶部空间，并提供一个与官方拖拽区一致的顶部拖拽条（`data-window-drag` + `-webkit-app-region: drag`），专注时可拖动窗口；原生全屏（`data-fullscreen`）时预留自动降为 20px；Windows 上还会隐藏被官方提升到标题栏层的「侧边栏开关」与「新建会话」按钮（侧栏折叠 / 窄窗口时出现），避免它们浮在专注层之上、误触后在你阅读时切换会话；退出专注后随窗口 chrome 一起恢复。普通浏览器中这些变量与标记不存在，回退 0px、与旧版逐像素一致 |
+| 文件引用 chip | AI 回复中的行内代码路径由官方 `chatFileMentions` 解析为可点击 chip：dsh 0.2.x 传入官方同款的真实 Turn face（`deliverables` 投影），点击经右侧栏资源控制器以 `dsh-resource://file/session/…` 打开；dsh ≤ 0.1.x 继续使用旧的 owner 形状与 `workspaces.openPath`；无投影数据时不显示 chip，绝不因解析异常崩溃 |
 | 图片解析 | assistant 的 `image` 块经 `uiConversation.imageUrl`（dsh 0.1.2+ 的会话授权图片缓存）解析，旧版 dsh 自动回退到 legacy 解析器 |
 | 工具调用折叠 | 遵循官方「对话显示」偏好（normal / compact）；compact 模式把每轮的工作部分折叠成「N 次工具调用 · M 条消息 · K 个 subagent」披露行（无内容时显示「已思考」），点击可展开完整明细；steering 消息始终独立成行不被折叠；流式中的最后一轮保持展开直到结束 |
 | 分类摘要明细 | 展开后按工具类别计数：命令 / 编辑 / 搜索 / 读取 / 列目录 / 子代理 / 待办 / 目标 / 工作流 / 技能 / 提问 / 计划 / 后台任务 / 上下文注入 |
@@ -80,11 +83,11 @@
 | 渲染错误兜底 | 遮罩内容包裹错误边界：一次渲染崩溃不会永久打死「专注」按钮，下次打开自动重试 |
 | 兼容 DSH-better-sidebar | 进入专注时在 `<body>` 打标记，样式层自动隐藏其右上角的收放面板按钮与已开启的右侧 / 底部面板，并释放被挤压的布局；退出专注后按原状态还原 |
 | 旧版兼容模式 | dsh < 0.1.2 缺少新服务时降级运行（legacy 快照适配），控制台一次性提示，不会崩溃 |
-| 跨版本构件兼容 | 图标等官方构件在两个大版本间改名时按可用性回退（dsh 0.2 移除了 `…14` / `…16` 定尺图标，改用 `…Regular` + `size`），不会因为 `undefined` 组件触发 React #130 |
+| 跨版本构件兼容 | 图标等官方构件在两个大版本间改名时按可用性回退（dsh 0.2 移除了 `…14` / `…16` 定尺图标，改用 `…Regular` + `size`；dsh 0.2.2 桌面版移除了 `projectUserText`，回退到 `UserTextRun`），不会因为 `undefined` 组件触发 React #130 |
 
 ## 安装
 
-需要 `dsh` CLI（`>= 0.1.2-rc.1`），Node `>= 22.19.0`。
+需要 `dsh`（Web CLI 或桌面版，`>= 0.1.2-rc.1`），Node `>= 22.19.0`（仅源码安装时需要 Node）。
 
 **从 npm（推荐）**
 
@@ -118,6 +121,14 @@ dsh web
 > 然后重新执行 `add`。**该授权允许本包代码在安装时于你的机器上执行**——请只对可信来源授权，并锁定 commit（`github:boogoo619/dsh-focus-overlay#<sha>`）。
 
 安装后重启 `dsh web` 生效。
+
+**DSH 桌面版（macOS / Windows）**
+
+dsh 桌面版自带插件管理，不需要 CLI：侧栏 **Plugins → 添加插件**，填入 `dsh-focus-overlay`（或本机目录 / `link:` 路径，例如 `link:/path/to/dsh-focus-overlay`），安装后在本插件详情页中配置。安装或更新后重新加载桌面窗口（或重启桌面应用）生效。
+
+桌面版适配基于 **dsh 桌面版 0.2.2-rc.1** 验证：macOS 与 Windows 共用同一套 Electron 渲染层与客户端契约，窗口框架差异（macOS 红绿灯 / Windows 原生标题栏）由官方 `data-platform` / `data-windows-titlebar` / `data-fullscreen` 标记驱动，插件按官方窗口框架变量自适应，无需按平台分别安装。专注模式下顶部为可拖动窗口的标题空白条；按原生全屏切换后（macOS 绿灯 / Windows 最大化按钮）自动收起预留空间。
+
+> 桌面版使用独立的 `desktop` profile：如果只在 Web CLI 的 `web` profile 里装过本插件，桌面版仍需在 Plugins 页面安装一次。
 
 > **首次安装**：重启后欢迎页会弹出一次「专注模式」引导，说明功能并让你就地完成配置；其中所有设置随时可以更改——新版 dsh 在侧栏「Plugins」页面中打开本插件的详情页，旧版在「设置 → 插件 → 插件配置」中。
 

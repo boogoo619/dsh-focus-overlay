@@ -161,6 +161,32 @@ export function sessionFileAddressOf(sessionId: string, cwd: string | undefined,
   return `dsh-resource://file/session/${encode(String(sessionId))}/${body}`
 }
 
+/** Resolve the owner object the official `chatFileMentions.forClosing` expects.
+ *
+ *  dsh 0.2.x's provider resolves a turn's produced / presented files through
+ *  `owner.turn.data.get('deliverables')` — the owner the official ui-chat turn
+ *  tail passes — and throws on the plain `{turn: {turn, step}}` owner shape the
+ *  overlay used to pass; the caller's catch then silently disabled the inline
+ *  file-mention chips (pre-existing on every 0.2 build, not a desktop
+ *  regression). The Chat snapshot's `timeline.turns` carries the real Turn
+ *  faces, so look one up by the assistant node's turn number. Chips belong to
+ *  the settled closing reply only, so a missing or still-running turn resolves
+ *  to null. Generations without a `timeline` (0.1.x) keep the legacy shape
+ *  their provider accepts. */
+export function fileMentionOwnerOf(
+  chatView: any,
+  node: any,
+  openFile: (path: string, options?: any) => void,
+): { owner: any; modern: boolean } | null {
+  const turns = chatView && chatView.timeline ? chatView.timeline.turns : null
+  if (turns && typeof turns.get === 'function') {
+    const turnFace = turns.get(node && node.turn)
+    if (!turnFace || turnFace.status !== 'closed') return null
+    return { owner: { turn: turnFace, seq: node.seq, openFile }, modern: true }
+  }
+  return { owner: { turn: { turn: node.turn, step: node.step }, seq: node.seq, openFile }, modern: false }
+}
+
 // ---- text helpers ----
 export function flattenText(content: any): string {
   if (!content || !content.length) return ''

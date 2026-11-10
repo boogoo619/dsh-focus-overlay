@@ -1,5 +1,5 @@
 node_modules/
-lib/
+/lib/
 *.log
 .DS_Store
 tests/e2e/out/

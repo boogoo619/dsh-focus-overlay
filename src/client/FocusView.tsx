@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Component, type ReactNode } from 'react'
-import { MarkdownText, projectUserText, Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { projectUserTextCompat } from './primitives'
 import { IconChevronDown } from './icons'
 import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
 import { markdownLabels } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, pendingInteractionFromStatus, currentSessionIdOf, transcriptViewOf, sessionFileAddressOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, pendingInteractionFromStatus, currentSessionIdOf, transcriptViewOf, sessionFileAddressOf, fileMentionOwnerOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 import { celebrateThenOpen } from './celebrate'
 import { TurnRail, type RailItem } from './TurnRail'
@@ -73,16 +74,18 @@ function useDonePing(): number {
 
 /** Body of a sent user message / steering row.
  *
- *  dsh 0.1.3-alpha.2 removed the `MessageText` component from the primitives
- *  module in favour of the `projectUserText` display projection (which has
- *  existed since 0.1.2 and is still exported by 0.1.5). Importing the removed
- *  name made it `undefined`, so the overlay threw React #130 the moment it
- *  rendered a session containing a user message — the "toggle does nothing"
- *  symptom. `projectUserText` returns inline plain runs plus `@session` /
- *  `/skill` chips; `.fm-user` still supplies the bubble chrome and
- *  `white-space: pre-wrap`, so the text keeps its shape. */
+ *  The official user-text projection has now changed twice: dsh 0.1.3-alpha.2
+ *  removed `MessageText` in favour of `projectUserText` (which this component
+ *  then imported as a named binding — React #130 the moment a user row
+ *  rendered when the later removal made it `undefined`), and dsh 0.2.2's
+ *  desktop runtime removed `projectUserText` itself (the conversation surface
+ *  parses user text and falls back to the `UserTextRun` primitive).
+ *  `projectUserTextCompat` resolves the projection the running primitives
+ *  module exports (`projectUserText` → `UserTextRun` → raw text), so one
+ *  bundle serves 0.1.2 through 0.2.2. `.fm-user` still supplies the bubble
+ *  chrome and `white-space: pre-wrap`, so the text keeps its shape. */
 function UserText({ text }: { text: string }) {
-  return <>{projectUserText(text, [])}</>
+  return <>{projectUserTextCompat(text)}</>
 }
 
 // ---- scroll/anchor ledger (module scope; refs populate while the overlay is mounted) ----
@@ -663,18 +666,26 @@ function FocusContent(props: any) {
     } catch { /* a mention click degrades to a no-op, never a render crash */ }
   }, [sidebarRight, workspaces, sessions, currentId])
 
+  /** Assistant-row inline-code file mentions. The official provider resolves
+   *  only a turn's produced / presented files, and dsh 0.2.x reads them from
+   *  the real Turn face (`owner.turn.data.get('deliverables')`) — the same
+   *  owner the official ui-chat turn tail passes. Handing it a plain
+   *  `{turn: number, step}` makes `forClosing` throw, and the plugin's catch
+   *  silently disabled the chips on every 0.2 build (pre-existing bug, not a
+   *  0.2.2 regression). `fileMentionOwnerOf` (model.ts) resolves the Turn face
+   *  from the Chat snapshot's `timeline.turns`, and keeps the legacy owner
+   *  shape for generations without a timeline. */
   const fileMentionsFor = useCallback((node: any): any => {
     if (!chatFileMentions) return undefined
     try {
+      const openFile = (path: string, options?: any) => openMentionedFile(path, options)
+      const resolved = fileMentionOwnerOf(chatView, node, openFile)
+      if (resolved === null) return undefined
       // dsh 0.2 widened the signature to (owner, sessionId); the 0.1.x call
       // ignores the extra argument, so both shapes are satisfied at once.
-      return chatFileMentions.forClosing({
-        turn: { turn: node.turn, step: node.step },
-        seq: node.seq,
-        openFile: (path: string, options?: any) => openMentionedFile(path, options),
-      }, currentId)
+      return chatFileMentions.forClosing(resolved.owner, currentId)
     } catch { return undefined }
-  }, [chatFileMentions, currentId, openMentionedFile])
+  }, [chatFileMentions, chatView, currentId, openMentionedFile])
 
   // ---- bottom dock wiring ----
   // The bar shares the MAIN composer's draft through the official per-session
@@ -736,7 +747,12 @@ function FocusContent(props: any) {
     if (!f) setEngaged(false)
   }
 
-  const queueCount = snap && snap.queue ? snap.queue.length : 0
+  // Queued sends: dsh 0.2.2's session snapshot no longer carries `queue`
+  // (content moved to the conversation assembly); the official input facade's
+  // state does. Keep the old snapshot read as the pre-0.2.2 fallback.
+  const queueCount = inputState && Array.isArray(inputState.queue)
+    ? inputState.queue.length
+    : (snap && snap.queue ? snap.queue.length : 0)
   const occCount = inputState && inputState.occurrences ? inputState.occurrences.length : 0
   const promptErr = snap && snap.promptError && snap.promptError.op === 'send' ? snap.promptError.error : null
   const errorLine = promptErr ? (promptErr.message || promptErr.code || 'send failed') : null
@@ -1054,6 +1070,18 @@ function FocusContent(props: any) {
 
   return (
     <div className="fm-overlay" ref={overlayRef} tabIndex={-1}>
+      {/* Desktop window-frame strip. The dsh desktop shells (macOS and
+          Windows, 0.2.2-rc.1) use a hidden native titlebar and render the
+          titlebar area as ordinary web content, so the focus overlay must
+          (a) leave that strip clear — `--dsh-frame-overlay-top` is 68px on
+          macOS (48px traffic-light clearance + 20px) and 60px on Windows
+          (40px titlebar + 20px), 20px in fullscreen, undefined on the plain
+          web (0px fallback) — and (b) keep the window draggable: on macOS the
+          official `[data-window-drag]{-webkit-app-region:drag}` rule makes
+          this strip the drag surface, and the package stylesheet sets the
+          same app-region for the Windows renderer. No focusable content
+          lives here. */}
+      <div className="fm-frame-strip" data-window-drag aria-hidden="true" />
       <div className="fm-topbar">
         <div className="fm-title">{title}</div>
         <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>

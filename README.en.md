@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  A <b>focus mode</b> for the DeepSeek Harness (DSH) web GUI: one click to a full-screen reading overlay that hides the header, composer and sidebars, folding the AI tool-call flow into official-style count summaries — leaving only the conversation between you and the AI.<br>
+  A <b>focus mode</b> for the DeepSeek Harness (DSH) web GUI and the macOS / Windows desktop app: one click to a full-screen reading overlay that hides the header, composer and sidebars, folding the AI tool-call flow into official-style count summaries — leaving only the conversation between you and the AI.<br>
   Text, images, the turn rail, width handles and the answer card all reuse or 1:1 replicate official components, matching the chat view's look.
 </p>
 
@@ -26,6 +26,7 @@
 - **Auto-focus & reminders** — after a reply completes normally, optionally auto-enter focus at your question; while in focus, get a toast for a new reply or when the AI is waiting on you
 - **Width handles** — draggable strips beside the content column (official WidthHandle replica) that resize the reading column live and persist
 - **Hotkey F** — press `F` anywhere to enter focus mode instantly (toggleable in settings); typing in an input never triggers it
+- **Desktop window chrome** — adapts to the dsh desktop app (macOS / Windows): the top of the overlay reserves the official frame clearance for the macOS traffic lights and the Windows native titlebar, that top band drags the window while focused, and the reservation shrinks automatically in native fullscreen
 - **Focus counter** — the settings card keeps a running total of your focus-mode entries; past 100 entries a GitHub Star nudge appears, is remembered after the first use, and then becomes a direct "open the project page" button
 
 These features are designed to give **small screens** more content space: tucking away the persistent header/composer and tool steps lets the conversation use as much of the screen as possible.
@@ -56,7 +57,9 @@ Click the line to expand that turn's full work detail (per-category one-line sum
 | Feature | Description |
 | --- | --- |
 | Full-screen overlay | Registered into `shell.overlay` (additive, `replaceRisk: none`) — covers header / composer / sidebar; the thin top bar keeps only the session title and an exit button |
-| Official rendering primitives | Assistant text through official `MarkdownText` (GFM + code highlighting + TeX + code copy buttons + footnotes); user messages through the official `projectUserText` projection; buttons, modals and icons are all official primitives |
+| Official rendering primitives | Assistant text through official `MarkdownText` (GFM + code highlighting + TeX + code copy buttons + footnotes); user messages pick the official user-text projection the running dsh exports: `projectUserText` on 0.1.2–0.2.0 (plain runs plus `@`/`/` reference chips), and the official `UserTextRun` plain run after the 0.2.2 desktop runtime removed that function — a missing projection can never crash the overlay; buttons, modals and icons are all official primitives |
+| Desktop window frame | Reserves top space from the official `--dsh-frame-overlay-top` / `--dsh-frame-top-clearance` / `--dsh-frame-chrome-top` variables for the macOS traffic lights (~48px) and the Windows native titlebar (40px), and provides a top drag strip matching the official drag region (`data-window-drag` + `-webkit-app-region: drag`) so the window stays draggable while focused; native fullscreen (`data-fullscreen`) drops the reservation to 20px; on Windows it also hides the official sidebar-collapse and new-session controls that the window chrome promotes into the titlebar layer when the sidebar is collapsed / the window is narrow — otherwise they painted above the focus layer and a stray click switched sessions while reading; both come back with the chrome on exit. In a plain browser the variables and markers are absent, so the 0px fallback keeps the old pixel-identical layout |
+| File-mention chips | Inline-code paths in AI replies resolve through the official `chatFileMentions` into clickable chips: on dsh 0.2.x the overlay passes the same real Turn face (`deliverables` projection) the official chat turn tail uses and opens through the sidebar resource controller's `dsh-resource://file/session/…` address; on dsh ≤ 0.1.x it keeps the legacy owner shape and `workspaces.openPath`. No chip without projection data, and a resolver failure never crashes the overlay |
 | Image resolution | Assistant `image` blocks resolve through `uiConversation.imageUrl` (the dsh 0.1.2+ session-authorized image cache), falling back to the legacy resolver on older dsh |
 | Tool-call folding | Follows the official "transcript view" preference (normal / compact); compact mode folds each turn's work part into a "N tool calls · M messages · K subagents" disclosure line ("Thought for a while" when nothing is countable), clickable to expand the full detail; steering messages always stay top-level, never buried; the last turn stays unfolded while streaming |
 | Categorized summaries | The expanded detail counts tools by family: commands / edits / searches / reads / directory listings / subagents / todos / goals / workflows / skills / questions / plans / background jobs / context injections |
@@ -82,11 +85,11 @@ Click the line to expand that turn's full work detail (per-category one-line sum
 | Render error boundary | The overlay content is wrapped in an error boundary: one render crash never bricks the Focus button — the next open retries |
 | DSH-better-sidebar compatibility | While in focus, a `<body>` marker makes the package stylesheet hide better-sidebar's top-right panel toggles and any open right/bottom panels (and release the squeezed layout); restored on exit |
 | Legacy compatibility mode | On dsh < 0.1.2 missing the new services, the overlay degrades gracefully (legacy snapshot adapters) with a one-time console notice — no crash |
-| Cross-release primitive compatibility | Official primitives renamed between major releases fall back by availability (dsh 0.2 removed the fixed-size `…14` / `…16` icons in favour of `…Regular` + `size`), so an `undefined` component can never throw React #130 |
+| Cross-release primitive compatibility | Official primitives renamed between major releases fall back by availability (dsh 0.2 removed the fixed-size `…14` / `…16` icons in favour of `…Regular` + `size`; the dsh 0.2.2 desktop runtime removed `projectUserText` in favour of `UserTextRun`), so an `undefined` component can never throw React #130 |
 
 ## Install
 
-Requires the `dsh` CLI (`>= 0.1.2-rc.1`) and Node `>= 22.19.0`.
+Requires `dsh` (Web CLI or the desktop app, `>= 0.1.2-rc.1`) and, for source installs, Node `>= 22.19.0`.
 
 **From npm (recommended)**
 
@@ -120,6 +123,14 @@ dsh web
 > Then re-run `add`. **This authorization lets the package's code run on your machine at install time** — only grant it to sources you trust, and pin the commit (`github:boogoo619/dsh-focus-overlay#<sha>`).
 
 Restart `dsh web` after install.
+
+**DSH desktop app (macOS / Windows)**
+
+The desktop app manages plugins itself, no CLI needed: **Plugins → Add plugin** in the sidebar, enter `dsh-focus-overlay` (or a local directory / `link:` path such as `link:/path/to/dsh-focus-overlay`), then configure it on this plugin's detail page. Reload the desktop window (or restart the app) after installing or updating.
+
+Desktop support is verified against **dsh desktop 0.2.2-rc.1**: macOS and Windows share the same Electron renderer and client contracts; the window-chrome differences (macOS traffic lights / Windows native titlebar) are driven by the official `data-platform` / `data-windows-titlebar` / `data-fullscreen` markers, and the plugin adapts through the official frame variables — one install serves both platforms. In focus mode the top of the overlay is a draggable title band; native fullscreen (macOS green button / Windows maximize) shrinks the reservation automatically.
+
+> The desktop app uses its own `desktop` profile: installing the plugin only into the Web CLI's `web` profile does not install it in the desktop app — add it once on the Plugins page there too.
 
 > **First run**: after restarting, the welcome page shows a one-time "Focus Mode" intro that explains the features and lets you configure them in place; all of these settings can be changed anytime — on newer dsh open this plugin's detail page from the sidebar "Plugins" page, on older dsh use "Settings → Plugins → Plugin configuration".
 

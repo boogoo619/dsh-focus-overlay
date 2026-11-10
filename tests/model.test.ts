@@ -19,6 +19,7 @@ import {
   currentSessionIdOf,
   transcriptViewOf,
   sessionFileAddressOf,
+  fileMentionOwnerOf,
   legacyPendingOf,
   onboardingSeen,
   hotkeyShouldEnter,
@@ -348,6 +349,38 @@ describe('sessionFileAddressOf (dsh 0.2 resource address)', () => {
   })
   it('drops a leading ./ prefix and normalizes backslashes', () => {
     expect(sessionFileAddressOf('s1', '/w', './src\\a.ts')).toBe('dsh-resource://file/session/s1/src/a.ts')
+  })
+})
+
+describe('fileMentionOwnerOf (chatFileMentions owner adapter)', () => {
+  const openFile = () => {}
+  const closedTurn = { turn: 7, status: 'closed', data: new Map([['deliverables', { produced: [{ path: 'a.ts' }] }]]) }
+  const runningTurn = { turn: 8, status: 'running', data: new Map() }
+  const chatView = (entries: Array<[number, any]>) => ({ timeline: { turns: new Map(entries) } })
+
+  it('hands the real Turn face to the 0.2.x provider (data.get needed by forClosing)', () => {
+    const resolved = fileMentionOwnerOf(chatView([[7, closedTurn]]), { turn: 7, seq: 42, step: 2 }, openFile)
+    expect(resolved && resolved.modern).toBe(true)
+    expect(resolved && resolved.owner.turn).toBe(closedTurn)
+    expect(resolved && resolved.owner.seq).toBe(42)
+    expect(resolved && resolved.owner.openFile).toBe(openFile)
+    expect(resolved && resolved.owner.turn.data.get('deliverables').produced[0].path).toBe('a.ts')
+  })
+  it('resolves nothing for a missing or still-running turn (closing reply only)', () => {
+    expect(fileMentionOwnerOf(chatView([[7, closedTurn]]), { turn: 9, seq: 1, step: 0 }, openFile)).toBe(null)
+    expect(fileMentionOwnerOf(chatView([[8, runningTurn]]), { turn: 8, seq: 2, step: 0 }, openFile)).toBe(null)
+  })
+  it('keeps the legacy owner shape for generations without a timeline (0.1.x)', () => {
+    const resolved = fileMentionOwnerOf(null, { turn: 3, seq: 4, step: 1 }, openFile)
+    expect(resolved && resolved.modern).toBe(false)
+    expect(resolved && resolved.owner.turn).toEqual({ turn: 3, step: 1 })
+    expect(resolved && resolved.owner.seq).toBe(4)
+    const legacyShape = fileMentionOwnerOf({}, { turn: 5, seq: 6, step: 0 }, openFile)
+    expect(legacyShape && legacyShape.modern).toBe(false)
+  })
+  it('treats a timeline without turns.get as legacy', () => {
+    const resolved = fileMentionOwnerOf({ timeline: { turns: [] } }, { turn: 1, seq: 2, step: 0 }, openFile)
+    expect(resolved && resolved.modern).toBe(false)
   })
 })
 

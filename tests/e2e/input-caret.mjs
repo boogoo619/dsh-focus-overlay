@@ -42,6 +42,13 @@ const CHROMIUM_EXE =
   process.env.CHROMIUM_EXE ||
   join(homedir(), 'Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing')
 
+// Isolated dsh 0.2.2 desktop-runtime instances authenticate with the
+// per-process `?token=…` URL from their startup banner, not with the
+// ~/.dsh browser-session cookie; when DSH_GUI_ORIGIN carries that URL the
+// cookie is skipped. Default behaviour (cookie + http://127.0.0.1:3080) is
+// unchanged.
+const TOKEN_URL = /[?&]token=/.test(GUI_ORIGIN)
+
 // ---- browser-session cookie (mirrors dsh-client-connection BrowserAuth) ----
 
 const b64url = (buf) => Buffer.from(buf).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '')
@@ -87,8 +94,10 @@ const pass = (msg) => console.log(`  ✓ ${msg}`)
 async function openGui() {
   const browser = await chromium.launch({ executablePath: CHROMIUM_EXE, headless: true })
   const context = await browser.newContext()
-  const cookie = mintAuthCookie()
-  await context.addCookies([{ name: cookie.name, value: cookie.value, url: GUI_ORIGIN }])
+  if (!TOKEN_URL) {
+    const cookie = mintAuthCookie()
+    await context.addCookies([{ name: cookie.name, value: cookie.value, url: GUI_ORIGIN }])
+  }
   await context.addInitScript((fallback) => {
     // Skip the plugin's first-run intro so it cannot block interaction, and
     // pin the borrow pref so the run exercises exactly one input surface.
@@ -97,7 +106,17 @@ async function openGui() {
   }, FALLBACK)
   const page = await context.newPage()
   page.on('pageerror', (err) => console.error(`  [pageerror] ${err.message}`))
-  await page.goto(GUI_ORIGIN, { waitUntil: 'networkidle' })
+  await page.goto(GUI_ORIGIN, { waitUntil: TOKEN_URL ? 'domcontentloaded' : 'networkidle' })
+  if (TOKEN_URL) {
+    // Session rows fill asynchronously after the workspace rows; wait for
+    // one so the callers never race the sidebar's own render.
+    await page.waitForSelector('[role="treeitem"][class*="sessionRow"]', { timeout: 30000 })
+    const cont = page.locator('button:has-text("继续")').first()
+    if ((await cont.count()) > 0 && (await cont.isVisible().catch(() => false))) {
+      await cont.click().catch(() => {})
+      await page.waitForTimeout(400)
+    }
+  }
   return { browser, context, page }
 }
 
@@ -123,9 +142,14 @@ async function dumpUi(page) {
 
 async function freshSession(page) {
   // A fresh throwaway session, so the test never touches a real draft.
-  // (Selector verified against the host UI; re-run with --probe after a
+  // dsh <= 0.2.0 labels the button 新建会话; dsh 0.2.2 renamed it 新会话
+  // (with the ⌥⌘N hint in the label), so try the new name first and fall
+  // back to the old one — each build matches exactly one.
+  // (Selectors verified against the host UI; re-run with --probe after a
   // dsh UI update if this stops matching.)
-  await page.getByRole('button', { name: '新建会话' }).first().click()
+  const renamed = page.getByRole('button', { name: '新会话' }).first()
+  if ((await renamed.count()) > 0) await renamed.click()
+  else await page.getByRole('button', { name: '新建会话' }).first().click()
   await page.waitForTimeout(800)
 }
 

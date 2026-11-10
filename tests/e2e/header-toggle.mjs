@@ -17,6 +17,9 @@
  *   - the dsh GUI running at http://127.0.0.1:3080 with THIS repo's build live
  *     (`npm run build`; the web profile symlinks dsh-focus-overlay to this
  *     checkout, a page reload picks up the rebuilt lib/);
+ *     an isolated DSH desktop-runtime 0.2.2 instance also works: pass its
+ *     startup banner URL (with `?token=…`) as DSH_GUI_ORIGIN — then the
+ *     browser-session cookie below is not needed and not minted;
  *   - at least one stored session that contains a user message;
  *   - `~/.dsh/.credentials.yaml` carrying the `client-connection/browser-session`
  *     record (the cookie is minted locally, the secret never leaves the box);
@@ -35,6 +38,13 @@ const AUTHORITY = new URL(GUI_ORIGIN).host // cookie audience = request host
 const CHROMIUM_EXE =
   process.env.CHROMIUM_EXE ||
   join(homedir(), 'Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing')
+
+// The isolated dsh 0.2.2 desktop-runtime web server authenticates with the
+// per-process `?token=…` URL it prints on startup; there is no
+// `~/.dsh/.credentials.yaml` browser-session record for that authority, so the
+// cookie-minting path below cannot work there. Detect the token URL in
+// DSH_GUI_ORIGIN and skip minting; the default 3080 cookie flow is unchanged.
+const TOKEN_URL = /[?&]token=/.test(GUI_ORIGIN)
 
 // ---- browser-session cookie (mirrors dsh-client-connection BrowserAuth) ----
 
@@ -80,8 +90,10 @@ const pass = (msg) => console.log(`  ✓ ${msg}`)
 async function openGui() {
   const browser = await chromium.launch({ executablePath: CHROMIUM_EXE, headless: true })
   const context = await browser.newContext()
-  const cookie = mintAuthCookie()
-  await context.addCookies([{ name: cookie.name, value: cookie.value, url: GUI_ORIGIN }])
+  if (!TOKEN_URL) {
+    const cookie = mintAuthCookie()
+    await context.addCookies([{ name: cookie.name, value: cookie.value, url: GUI_ORIGIN }])
+  }
   await context.addInitScript(() => {
     // Skip the plugin's first-run intro so it cannot block interaction.
     localStorage.setItem('dsh-focus-overlay:onboarded', '1')
@@ -90,7 +102,19 @@ async function openGui() {
   const page = await context.newPage()
   page.on('pageerror', (err) => console.error(`  [pageerror] ${err.message}`))
   page.on('console', (m) => { if (m.type() === 'error' && /dsh-focus-overlay/.test(m.text())) console.error(`  [console.error] ${m.text()}`) })
-  await page.goto(GUI_ORIGIN, { waitUntil: 'networkidle' })
+  await page.goto(GUI_ORIGIN, { waitUntil: TOKEN_URL ? 'domcontentloaded' : 'networkidle' })
+  if (TOKEN_URL) {
+    // The isolated instance boots the plugin client asynchronously; wait for
+    // the sidebar, then dismiss the official 预览版说明 dialog if it shows.
+    // Session rows fill asynchronously after the workspace rows; wait for
+    // one so the callers never race the sidebar's own render.
+    await page.waitForSelector('[role="treeitem"][class*="sessionRow"]', { timeout: 30000 })
+    const cont = page.locator('button:has-text("继续")').first()
+    if ((await cont.count()) > 0 && (await cont.isVisible().catch(() => false))) {
+      await cont.click().catch(() => {})
+      await page.waitForTimeout(400)
+    }
+  }
   return { browser, context, page }
 }
 
