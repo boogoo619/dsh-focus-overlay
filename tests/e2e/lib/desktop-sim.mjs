@@ -278,14 +278,13 @@ export async function launchSim({ origin, viewport = { width: 1440, height: 900 
       return false
     },
     /**
-     * Open a stored sidebar session that has conversation history.
-     * Picks (in order): DSH_SESSION_TITLE prefix, the seeded desktop-adaptation
-     * session, then the first session leaf in the sidebar (the workspace group
-     * rows are treeitems too, so they are filtered out).
-     * @returns {Promise<{title: string, rowText: string}>}
+     * List the stored sidebar session rows (workspace/project rows are
+     * treeitems too, so only rows that carry the session-row class or the
+     * relative-time suffix are returned). Expands “展开其余 N 个会话” once when
+     * older sessions are hidden, and waits for the async sidebar fill-in.
+     * @returns {Promise<Array<{index: number, text: string, cls: string}>>}
      */
-    async openSessionWithHistory() {
-      const hint = process.env.DSH_SESSION_TITLE || '适配最新 Windows 和 Mac 桌面版 dsh'
+    async storedSessions() {
       const sessionRows = page.locator('[role="treeitem"]')
       const readRows = async () => {
         const rows = []
@@ -322,25 +321,42 @@ export async function launchSim({ origin, viewport = { width: 1440, height: 900 
         }
         await sleep(400)
       }
-      const candidates = rows.filter((row) => isSessionRow(row) && !row.text.startsWith('新会话'))
-      if (candidates.length === 0) {
-        throw new Error(`sidebar has no non-draft session row; treeitems: ${rows.map((row) => `“${row.text}”`).join(' | ')}`)
-      }
-      // Prefer the seeded desktop-adaptation session (has user + assistant
-      // history); otherwise the first stored session.
-      const readd = await readRows()
-      const picked = readd.filter((row) => isSessionRow(row) && !row.text.startsWith('新会话')).find((row) => row.text.startsWith(hint)) || candidates[0]
-
-      log(`→ opening session “${picked.text.slice(0, 40)}”`)
-      await sessionRows.nth(picked.index).click()
+      return rows.filter(isSessionRow)
+    },
+    /**
+     * Open one stored session by its sidebar row index and wait until the
+     * session header (and the plugin's 专注 action) is live.
+     * @returns {Promise<{title: string, rowText: string, rowIndex: number}>}
+     */
+    async openStoredSession(rowIndex) {
+      const row = page.locator('[role="treeitem"]').nth(rowIndex)
+      const rowText = ((await row.textContent()) || '').replace(/\s+/g, ' ').trim()
+      log(`→ opening session “${rowText.slice(0, 40)}”`)
+      await row.click()
       await sleep(1_200)
       await waitFor(
         async () => (await page.locator('header button:has-text("专注")').count()) > 0,
         { timeout: 20_000, interval: 250, label: 'session header 专注 action' },
       )
       await sleep(600)
-      const title = picked.text.replace(/\s*\d+\s*(分钟|小时|天|个月|年)\s*$/, '').trim()
-      return { title, rowText: picked.text }
+      const title = rowText.replace(/\s*\d+\s*(分钟|小时|天|个月|年)\s*$/, '').trim()
+      return { title, rowText, rowIndex }
+    },
+    /**
+     * Open a stored sidebar session that has conversation history.
+     * Picks (in order): DSH_SESSION_TITLE prefix, the seeded desktop-adaptation
+     * session, then the first stored session.
+     * @returns {Promise<{title: string, rowText: string, rowIndex: number}>}
+     */
+    async openSessionWithHistory() {
+      const hint = process.env.DSH_SESSION_TITLE || '适配最新 Windows 和 Mac 桌面版 dsh'
+      const rows = await this.storedSessions()
+      const candidates = rows.filter((row) => !row.text.startsWith('新会话'))
+      if (candidates.length === 0) {
+        throw new Error(`sidebar has no non-draft session row; treeitems: ${rows.map((row) => `“${row.text}”`).join(' | ')}`)
+      }
+      const picked = candidates.find((row) => row.text.startsWith(hint)) || candidates[0]
+      return this.openStoredSession(picked.index)
     },
     /** Click the plugin's 专注 header action (idempotent: no-op if already open). */
     async clickFocus() {
@@ -463,6 +479,16 @@ export async function launchSim({ origin, viewport = { width: 1440, height: 900 
      */
     async zLeakScan() {
       return page.evaluate(readZLeaks)
+    },
+    /**
+     * Ordered window-drag hit test: the browser-side `probeDragRegions`
+     * emulation of Electron's frameless-window region stack (see that
+     * function's comment for the semantics and why the inherited
+     * `window-drag` value has to be reconstructed here).
+     * @param {{points?: Array<[number, number]>, bandTop?: number|null}} options
+     */
+    async dragRegionProbe({ points = [], bandTop = null } = {}) {
+      return page.evaluate(probeDragRegions, { points, bandTop })
     },
     /**
      * Park the pointer in the middle of the viewport and let transient
@@ -751,6 +777,198 @@ function readZLeaks() {
     }
   }
   return { overlayOpen: true, candidates, leaks, bodyFocus: document.body.hasAttribute('data-fm-focus') }
+}
+
+/**
+ * Ordered window-drag hit test — Electron's frameless-window region stack,
+ * emulated inside the page from the renderer DOM.
+ *
+ * Why: the desktop shell does not use the browser's hit test for the window
+ * drag surface. It takes the renderer's ordered list of CSS app-region rects
+ * and applies them in order — `drag` adds area, `no-drag` subtracts it, and the
+ * LATER rect wins where two overlap (electron `shell/browser/ui/drag_util.cc`
+ * `DraggableRegionsToSkRegion`; renderer order is Blink
+ * `LocalFrameView::CollectDraggableRegions` pre-order ≈ DOM order, parents
+ * before children). Rects are laid-out boxes and are NOT clipped by ancestor
+ * overflow, so a scrolled child keeps its full box, including negative-y
+ * coordinates above its clip container. That is exactly how the focus
+ * overlay's reserved titlebar band got cancelled on sessions with content:
+ * later no-drag rects (`.fm-rail-slot`, the scrolled `.fm-inner` subtree)
+ * covered the band after the old first-child `.fm-frame-strip`.
+ *
+ * Inherited property: on the 0.2.2 desktop runtime (Electron 44.7 / Chrome
+ * 152) this is the standardised, inherited `window-drag` property (`move` /
+ * `none`), so every descendant of the overlay root — which the official
+ * darwin CSS marks no-drag because it has `tabindex=-1` — is itself a no-drag
+ * rect. The Playwright Chromium used by the e2e harness is older (151): it only
+ * knows the legacy, NON-inherited `-webkit-app-region`/`app-region`, and a
+ * child of a drag/no-drag element computes `none` (verified; `CSS.supports
+ * ('window-drag','move')` is false). This helper therefore reconstructs the
+ * inherited value by walking the DOM in pre-order, passing the parent's
+ * effective region down until an element declares its own — the same rect list
+ * the desktop renderer builds. Limitation: an element whose only declaration
+ * is `app-region: none/initial` also computes `none` in Chromium 151 and is
+ * treated as inheriting; the probed overlay subtree contains no such
+ * declaration.
+ *
+ * Hit test: for each probe point the LAST collected rect that contains it wins
+ * (half-open boxes, like gfx::Rect::Contains). Points are [x, y] pairs in CSS
+ * px, viewport coordinates.
+ *
+ * @param {{points?: Array<[number, number]>, bandTop?: number|null}} options
+ * @returns {{
+ *   viewport: {width: number, height: number},
+ *   nativeInheritance: boolean,
+ *   regionCount: number,
+ *   probes: Array<{point: {x: number, y: number}, draggable: boolean, winner: object|null}>,
+ *   strip: object|null,
+ *   overlay: object|null,
+ *   band: object|null,
+ * }}
+ */
+export function probeDragRegions({ points = [], bandTop = null } = {}) {
+  const viewport = { width: window.innerWidth, height: window.innerHeight }
+  // Chromium 152+ implements the standardized inherited `window-drag`
+  // property; older Chromium (the one Playwright ships here) does not.
+  const nativeInheritance =
+    typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('window-drag', 'move')
+  const round = (value) => Math.round(value * 100) / 100
+  const readRegion = (style) => {
+    const legacy = (style.getPropertyValue('-webkit-app-region') || style.getPropertyValue('app-region') || '').trim()
+    if (legacy === 'drag' || legacy === 'no-drag') return legacy
+    const standardized = (style.getPropertyValue('window-drag') || '').trim()
+    if (standardized === 'move') return 'drag'
+    if (standardized === 'none') return 'no-drag'
+    return ''
+  }
+  const describe = (element, region, inherited, rect) => {
+    let cls = ''
+    try {
+      cls = typeof element.className === 'string' ? element.className : element.getAttribute('class') || ''
+    } catch {
+      cls = ''
+    }
+    return {
+      tag: element.tagName.toLowerCase(),
+      cls: cls.slice(0, 120),
+      role: element.getAttribute('role'),
+      tabindex: element.getAttribute('tabindex'),
+      dataWindowDrag: element.hasAttribute('data-window-drag'),
+      region,
+      inherited,
+      rect,
+    }
+  }
+
+  // Document pre-order = the renderer's layout-tree order for these boxes.
+  const regions = []
+  const walk = (element, inheritedRegion) => {
+    const style = getComputedStyle(element)
+    const own = readRegion(style)
+    const region = own || inheritedRegion
+    const display = style.display
+    const visible =
+      style.visibility === 'visible' && display !== 'none' && display !== 'inline' && display !== 'contents'
+    if (visible && (region === 'drag' || region === 'no-drag')) {
+      const box = element.getBoundingClientRect()
+      if (box.width > 0 && box.height > 0) {
+        regions.push({
+          index: regions.length,
+          ...describe(element, region, own === '', {
+            x: round(box.x),
+            y: round(box.y),
+            width: round(box.width),
+            height: round(box.height),
+            left: round(box.left),
+            top: round(box.top),
+            right: round(box.right),
+            bottom: round(box.bottom),
+          }),
+        })
+      }
+    }
+    for (const child of element.children) walk(child, region)
+  }
+  walk(document.documentElement, '')
+
+  const winnerAt = (x, y) => {
+    let winner = null
+    for (const region of regions) {
+      const box = region.rect
+      if (x >= box.left && x < box.right && y >= box.top && y < box.bottom) winner = region
+    }
+    return winner
+  }
+  const probes = points.map(([x, y]) => {
+    const winner = winnerAt(x, y)
+    return {
+      point: { x: Math.round(x), y: Math.round(y) },
+      draggable: Boolean(winner && winner.region === 'drag'),
+      winner,
+    }
+  })
+
+  const overlay = document.querySelector('.fm-overlay')
+  const strip = document.querySelector('.fm-frame-strip')
+  const stripRegion = strip
+    ? regions.find((region) => /(^|\s)fm-frame-strip(\s|$)/.test(region.cls)) || null
+    : null
+
+  // Band diagnostics make the assertion non-vacuous: they count the no-drag
+  // rects that overlap the reserved titlebar band and come BEFORE the strip in
+  // the ordered list. The fix is precisely that none come after it.
+  let band = null
+  if (Number.isFinite(bandTop) && bandTop > 0) {
+    const overlapsBand = (box) =>
+      box.right > 0 && box.left < viewport.width && box.top < bandTop && box.bottom > 0
+    const noDrag = regions.filter((region) => region.region === 'no-drag' && overlapsBand(region.rect))
+    const before = stripRegion ? noDrag.filter((region) => region.index < stripRegion.index) : noDrag
+    const after = stripRegion ? noDrag.filter((region) => region.index > stripRegion.index) : []
+    const summarize = (region) => ({
+      tag: region.tag,
+      cls: region.cls,
+      role: region.role,
+      inherited: region.inherited,
+      rect: region.rect,
+    })
+    band = {
+      top: bandTop,
+      noDragOverlapping: noDrag.length,
+      noDragBeforeStrip: before.length,
+      noDragAfterStrip: after.length,
+      // Laid-out boxes above the band's bottom edge: scrolled content keeps
+      // negative-y rects (`.fm-inner`, `.fm-msg`, ...) once `.fm-body` scrolls.
+      scrolled: noDrag.filter((region) => region.rect.top < 0 || region.rect.bottom <= 0).length,
+      // The pre-fix culprits by class (rail wrapper / scrolled transcript).
+      culprits: noDrag.filter((region) => /(fm-inner|fm-msg|fm-rail)/.test(region.cls)).slice(0, 8).map(summarize),
+      before: before.slice(0, 8).map(summarize),
+      after: after.slice(0, 8).map(summarize),
+    }
+  }
+
+  return {
+    viewport,
+    nativeInheritance,
+    regionCount: regions.length,
+    probes,
+    strip: strip
+      ? {
+          region: stripRegion ? stripRegion.region : readRegion(getComputedStyle(strip)),
+          inherited: stripRegion ? stripRegion.inherited : null,
+          index: stripRegion ? stripRegion.index : null,
+          rect: stripRegion ? stripRegion.rect : null,
+          childIndex: overlay ? [...overlay.children].indexOf(strip) : null,
+        }
+      : null,
+    overlay: overlay
+      ? {
+          childCount: overlay.children.length,
+          lastChildClass: overlay.lastElementChild ? String(overlay.lastElementChild.className || '') : null,
+          stripIsLastChild: overlay.lastElementChild === strip,
+        }
+      : null,
+    band,
+  }
 }
 
 /** Axis-aligned rectangle intersection test (touching edges do not count). */

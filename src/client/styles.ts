@@ -12,7 +12,13 @@ export const FOCUS_CSS = `
    generation pixel-identical. On macOS the shell's own
    [data-window-drag]{-webkit-app-region:drag} applies; the explicit
    app-region also makes the strip draggable in the Windows renderer.
-   pointer-events stays enabled: a drag region must be hit-testable. */
+   pointer-events stays enabled: a drag region must be hit-testable.
+   The strip is rendered as the overlay's LAST child on purpose: Electron
+   keeps the renderer's app-region rects in layout-tree order and the later
+   rect wins where rects overlap, and every overlay descendant is no-drag
+   here because the overlay root (tabindex=-1) is marked no-drag by the
+   official darwin CSS and the property inherits — see the ordering note in
+   FocusView.tsx. */
 .fm-frame-strip{position:absolute;top:0;left:0;right:0;height:var(--dsh-frame-overlay-top,0px);flex:none;-webkit-app-region:drag;-webkit-user-select:none;user-select:none;z-index:0}
 /* Windows desktop: dsh-client-ui-sidebar promotes the sidebar collapse toggle
    to a fixed z-30 layer itself, above the official shell.overlay layer (z-20)

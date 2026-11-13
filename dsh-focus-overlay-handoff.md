@@ -1,5 +1,94 @@
 # Handoff — dsh-focus-overlay (focus-mode bundle plugin)
 
+## Fix — window drag band dead on sessions WITH content (2026-11-13)
+
+**Symptom (user report, macOS desktop app):** after entering focus mode the
+window could no longer be dragged by the top band on a session that has
+conversation content; a blank session could be dragged. Windows untested by the
+user, but the renderer path is shared.
+
+**Root cause — drag-region overlap order.** Electron hit-tests a frameless
+window against the renderer's ordered list of CSS `app-region` rects. The
+renderer sends them in layout-tree (= DOM) order, parent before child, and the
+browser keeps "a `drag` rect adds its area, a `no-drag` rect removes it; where
+rects overlap the LATER rect wins" (Electron
+`shell/browser/ui/drag_util.cc::DraggableRegionsToSkRegion`; renderer order =
+Blink `LocalFrameView::CollectDraggableRegions` pre-order). Two facts compound:
+
+1. `-webkit-app-region` is an **inherited** property, and the official darwin
+   CSS marks `[tabindex]` (among buttons/inputs/roles) `no-drag`. The focus
+   overlay root is `tabIndex={-1}`, so **every descendant of `.fm-overlay` is a
+   no-drag rect**.
+2. `.fm-frame-strip` (the drag surface covering the reserved desktop titlebar
+   band, 68px darwin / 60px win32) was the overlay's **first** child, so any
+   later overlay descendant whose layout rect overlaps that band cancelled it.
+   Layout rects are **not clipped** by ancestor overflow, so:
+   - the turn-rail wrapper `.fm-rail-slot` (`position:absolute;inset:0;
+     pointer-events:none`; renders once the rail has ≥2 turns) is a
+     full-viewport no-drag rect — it wins the band at every point;
+   - the scrolled `.fm-body` flow keeps negative-y absolute rects
+     (`.fm-inner`, `.fm-msg`, paragraphs, inline code) after the overlay
+     scrolls to its anchor.
+
+A blank session renders neither, so the strip was the last rect over the band
+and dragging worked — exactly the reported split.
+
+**Evidence (real Electron window, not simulation).** An isolated second
+instance of the packaged app was launched with
+`--remote-debugging-port=9334`, `DSH_HOME=/tmp/dsh-home-appclone` (clone of
+`~/.dsh`, never the live home) and driven over CDP. Measured with an emulation
+of the ordered region hit test (computed `app-region` rects in DOM order, last
+cover wins): **with content** every band probe point (y=10/30/50, x=30, vw/2,
+vw-30, vw-140 at 1280×820, `data-platform=darwin` from the real preload)
+resolved to `no-drag <div class="fm-rail-slot">` (and `.fm-inner` at y=-1245
+for the scrolled case) while `.fm-frame-strip` was `drag` at 0,0 1280×68; the
+**blank draft session** resolved to `drag .fm-frame-strip` and carried neither
+element. This matches the user's report exactly.
+
+**Fix:** `.fm-frame-strip` now renders as the overlay's **last** child (after
+`{replyNotice}`), so its drag rect is the final word for the band; nothing
+inside the overlay can override it any more. `src/client/FocusView.tsx` and
+`src/client/styles.ts` document the ordering contract so it is not "tidied"
+back to the top. No other behavior change: the strip is still `aria-hidden`,
+non-focusable (a `tabindex` would match the darwin `no-drag` rule), paints
+nothing, and collapses to 0px on the plain web.
+
+**Verification:**
+- Unit suite: 129/129 passing.
+- **Real Electron window** (isolated second instance of the packaged app,
+  `--remote-debugging-port` + CDP, preload markers at boot — never the live
+  app): 43/43 checks. Content session (2 bubbles, rail mounted, `.fm-inner`
+  y=-1245): all 12 reserved-band probe points resolve to `drag
+  .fm-frame-strip`; 6436/6437 region rects precede it, zero after. Non-vacuity
+  flip in the same live window: `insertBefore(strip, firstChild)` → 12/12
+  points become `no-drag` with winner `.fm-rail-slot`; `appendChild(strip)` →
+  12/12 back to `drag .fm-frame-strip`. Scrolled-content-only path (rail off,
+  `.fm-inner` y=-1632) and the empty draft (hotkey F) are draggable too; Esc,
+  re-open, no page/plugin console errors.
+- **Playwright e2e regression** `tests/e2e/drag-band.mjs` (new; 35 checks, run
+  twice green by its author and once by the Lead on a fresh isolated home, port
+  3201): darwin 12/12 band points → strip; 82 no-drag rects over the band all
+  BEFORE the strip, 0 after; win32 band 60px 12/12 → strip; a synthetic
+  no-drag rect inserted before the strip keeps the band draggable while moving
+  it after the strip flips all 12 points to no-drag (old-order failure,
+  reproduced inside the committed test); red-before recorded by re-ordering the
+  live DOM. `tests/e2e/lib/desktop-sim.mjs` gained
+  `probeDragRegions()`/`sim.dragRegionProbe()` (ordered hit test + inherited
+  `window-drag` reconstruction, because Playwright's Chromium 151 predates the
+  inherited standard) and a behavior-preserving `storedSessions()` /
+  `openStoredSession()` split. `desktop-frame.mjs`/`header-toggle.mjs`/
+  `input-caret.mjs` unaffected.
+- **Gap that let this ship broken in 0.13.0:** the previous desktop-frame check
+  only read `getComputedStyle(strip)['-webkit-app-region']` and the strip's own
+  geometry; it never emulated the ordered overlap that a `no-drag` rect later in
+  the DOM performs. Any future window-chrome work must keep the drag band
+  claimed by the last layout-tree element covering it.
+
+**Rollout:** the desktop app caches the plugin client bundle at server start, so
+the fix reaches the live app only after restarting DeepSeek Harness (a page
+reload is not enough). Changes are uncommitted/unreleased (no version bump);
+`lib/` rebuilt from `src/`.
+
 ## dsh desktop 0.2.2-rc.1 adaptation (2026-11-10)
 
 **Target:** the new **DSH desktop app** (`/Applications/DeepSeek Harness.app`,

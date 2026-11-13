@@ -1070,18 +1070,6 @@ function FocusContent(props: any) {
 
   return (
     <div className="fm-overlay" ref={overlayRef} tabIndex={-1}>
-      {/* Desktop window-frame strip. The dsh desktop shells (macOS and
-          Windows, 0.2.2-rc.1) use a hidden native titlebar and render the
-          titlebar area as ordinary web content, so the focus overlay must
-          (a) leave that strip clear — `--dsh-frame-overlay-top` is 68px on
-          macOS (48px traffic-light clearance + 20px) and 60px on Windows
-          (40px titlebar + 20px), 20px in fullscreen, undefined on the plain
-          web (0px fallback) — and (b) keep the window draggable: on macOS the
-          official `[data-window-drag]{-webkit-app-region:drag}` rule makes
-          this strip the drag surface, and the package stylesheet sets the
-          same app-region for the Windows renderer. No focusable content
-          lives here. */}
-      <div className="fm-frame-strip" data-window-drag aria-hidden="true" />
       <div className="fm-topbar">
         <div className="fm-title">{title}</div>
         <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
@@ -1122,6 +1110,31 @@ function FocusContent(props: any) {
         </div>
       ) : null}
       {replyNotice}
+      {/* Desktop window-frame drag strip — MUST stay the overlay's LAST child.
+          The dsh desktop shells (macOS and Windows, 0.2.2-rc.1) hide the native
+          titlebar and render that area as ordinary web content, so the overlay
+          reserves it via `--dsh-frame-overlay-top` (68px macOS = 48px
+          traffic-light clearance + 20px, 60px Windows = 40px titlebar + 20px,
+          20px fullscreen, undefined → 0px on the plain web) and owns the drag
+          surface itself: the official `[data-window-drag]{app-region:drag}`
+          rule plus the same declaration in the package stylesheet (Windows
+          renderer). No focusable content, no `tabindex` (darwin's official
+          `[tabindex]{app-region:no-drag}` rule would silently kill the band),
+          aria-hidden — it paints nothing.
+          WHY LAST: Electron hit-tests the window against the renderer's
+          app-region rects in layout-tree order and the LATER rect wins where
+          they overlap (electron `shell/browser/ui/drag_util.cc`; renderer order
+          = Blink `LocalFrameView::CollectDraggableRegions` pre-order ≈ DOM
+          order). `-webkit-app-region` is inherited and `.fm-overlay` itself is
+          `tabIndex={-1}`, which the official darwin CSS marks `no-drag` — so
+          EVERY overlay descendant is a no-drag rect, and layout rects are not
+          clipped by ancestor overflow. On a session with content, the scrolled
+          message flow keeps negative-y rects (`.fm-inner` etc.) and the turn
+          rail's full-viewport `.fm-rail-slot` both overlap the reserved band;
+          while this strip was the FIRST child those later rects overrode it and
+          the window could only be dragged on a blank session. Rendered last,
+          its drag rect is the final word for the band. */}
+      <div className="fm-frame-strip" data-window-drag aria-hidden="true" />
     </div>
   )
 }
