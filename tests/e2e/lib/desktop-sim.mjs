@@ -417,7 +417,7 @@ export async function launchSim({ origin, viewport = { width: 1440, height: 900 
     async clearFrame() {
       return this.applyFrame({ platform: null, fullscreen: false })
     },
-    /** Snapshot of overlay geometry, computed styles and strip contract. */
+    /** Snapshot of overlay geometry, the merged titlebar band and drag surface. */
     async measureOverlay() {
       return page.evaluate(readOverlayState)
     },
@@ -565,25 +565,42 @@ function readOverlayState() {
     const r = el.getBoundingClientRect()
     return { x: r.x, y: r.y, top: r.top, left: r.left, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
   }
+  const regionOf = (el) => {
+    if (!el) return ''
+    const cs = getComputedStyle(el)
+    return (cs.getPropertyValue('-webkit-app-region') || cs.getPropertyValue('app-region') || '').trim()
+  }
   const html = document.documentElement
   const htmlCs = getComputedStyle(html)
   const cssVar = (name) => htmlCs.getPropertyValue(name).trim()
   const overlays = [...document.querySelectorAll('.fm-overlay')]
   const overlay = overlays[0] || null
+  const overlayCs = overlay ? getComputedStyle(overlay) : null
   const topbar = overlay ? overlay.querySelector('.fm-topbar') : null
-  const strip = overlay ? overlay.querySelector('.fm-frame-strip') : document.querySelector('.fm-frame-strip')
+  const topbarCs = topbar ? getComputedStyle(topbar) : null
+  const title = topbar ? topbar.querySelector('.fm-title') : null
+  const body = overlay ? overlay.querySelector('.fm-body') : null
+  const inner = overlay ? overlay.querySelector('.fm-inner') : null
+  const firstContent = inner ? inner.firstElementChild : null
+  // The overlay's drag surface is the child that explicitly claims the
+  // native-titlebar band: the merged titlebar row on macOS
+  // (`.fm-topbar[data-window-drag]` with a drag app-region) or the separate
+  // `.fm-frame-strip` on Windows, whichever is rendered with `drag`.
+  const surface = overlay
+    ? [...overlay.children]
+        .filter((el) => el.hasAttribute('data-window-drag'))
+        .filter((el) => {
+          const cs = getComputedStyle(el)
+          if (cs.display === 'none') return false
+          return (cs.getPropertyValue('-webkit-app-region') || cs.getPropertyValue('app-region') || '').trim() === 'drag'
+        })
+        .pop() || null
+    : null
+  const stripCandidate = overlay ? overlay.querySelector('.fm-frame-strip') : null
   const exitButton =
     (overlay &&
       [...overlay.querySelectorAll('button')].find((button) => /退出专注|Exit focus/i.test(button.textContent || ''))) ||
     null
-  const stripCs = strip ? getComputedStyle(strip) : null
-  const focusableSelector = 'a[href], button, input, select, textarea, [tabindex]'
-  const stripFocusables = strip
-    ? [...strip.querySelectorAll(focusableSelector)].filter((el) => el.tabIndex >= 0)
-    : []
-  const appRegion = stripCs
-    ? stripCs.getPropertyValue('-webkit-app-region').trim() || stripCs.getPropertyValue('app-region').trim()
-    : ''
   return {
     viewport: { width: window.innerWidth, height: window.innerHeight },
     html: {
@@ -601,16 +618,46 @@ function readOverlayState() {
     overlay: overlay
       ? {
           rect: rectOf(overlay),
-          paddingTop: getComputedStyle(overlay).paddingTop,
-          position: getComputedStyle(overlay).position,
-          zIndex: getComputedStyle(overlay).zIndex,
+          paddingTop: overlayCs.paddingTop,
+          frameBandVar: overlayCs.getPropertyValue('--fm-frame-band').trim(),
+          position: overlayCs.position,
+          zIndex: overlayCs.zIndex,
         }
       : null,
     topbar: topbar
       ? {
           rect: rectOf(topbar),
-          paddingTop: getComputedStyle(topbar).paddingTop,
-          text: (topbar.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+          position: topbarCs.position,
+          heightPx: Number.parseFloat(topbarCs.height) || 0,
+          appRegion: regionOf(topbar),
+          dataWindowDrag: topbar.hasAttribute('data-window-drag'),
+          childIndex: overlay ? [...overlay.children].indexOf(topbar) : -1,
+          isLastChild: Boolean(overlay && overlay.lastElementChild === topbar),
+          title: title
+            ? {
+                rect: rectOf(title),
+                text: (title.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+              }
+            : null,
+          // Interactive controls that live INSIDE the drag band must be
+          // excluded from it explicitly (otherwise a click would drag).
+          controlCount: [...topbar.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]')].length,
+          controlRegions: [...topbar.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]')].map((el) => ({
+            tag: el.tagName.toLowerCase(),
+            text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30),
+            appRegion: regionOf(el),
+          })),
+        }
+      : null,
+    body: body
+      ? {
+          rect: rectOf(body),
+          paddingTop: getComputedStyle(body).paddingTop,
+          scrollTop: body.scrollTop,
+          scrollHeight: body.scrollHeight,
+          // Where the first rendered content row actually starts: the band is
+          // only "reclaimed" if the transcript follows the band immediately.
+          firstContentTop: firstContent ? rectOf(firstContent).top : null,
         }
       : null,
     exit: exitButton
@@ -619,21 +666,27 @@ function readOverlayState() {
           text: (exitButton.textContent || '').replace(/\s+/g, ' ').trim(),
         }
       : null,
-    strip: strip
+    dragSurface: surface
       ? {
-          rect: rectOf(strip),
-          height: stripCs.height,
-          heightPx: Number.parseFloat(stripCs.height) || 0,
-          widthPx: Number.parseFloat(stripCs.width) || 0,
-          position: stripCs.position,
-          appRegion,
-          ariaHidden: strip.getAttribute('aria-hidden'),
-          tabIndex: strip.tabIndex,
-          tabIndexAttr: strip.getAttribute('tabindex'),
-          dataWindowDrag: strip.hasAttribute('data-window-drag'),
-          pointerEvents: stripCs.pointerEvents,
-          focusableCount: stripFocusables.length,
-          focusableTags: stripFocusables.map((el) => el.tagName.toLowerCase()),
+          tag: surface.tagName.toLowerCase(),
+          cls: String(surface.className || ''),
+          isTopbar: surface === topbar,
+          appRegion: regionOf(surface),
+          childIndex: overlay ? [...overlay.children].indexOf(surface) : -1,
+          isLastChild: Boolean(overlay && overlay.lastElementChild === surface),
+          heightPx: Number.parseFloat(getComputedStyle(surface).height) || 0,
+        }
+      : null,
+    // Windows-only band drag strip (display:none on macOS / plain web, where
+    // the merged title row is the drag surface).
+    frameStrip: stripCandidate
+      ? {
+          displayed: getComputedStyle(stripCandidate).display !== 'none',
+          display: getComputedStyle(stripCandidate).display,
+          rect: rectOf(stripCandidate),
+          appRegion: regionOf(stripCandidate),
+          isLastChild: Boolean(overlay && overlay.lastElementChild === stripCandidate),
+          childIndex: overlay ? [...overlay.children].indexOf(stripCandidate) : -1,
         }
       : null,
     userBubbleCount: document.querySelectorAll('.fm-overlay .fm-user').length,
@@ -793,14 +846,17 @@ function readZLeaks() {
  * overflow, so a scrolled child keeps its full box, including negative-y
  * coordinates above its clip container. That is exactly how the focus
  * overlay's reserved titlebar band got cancelled on sessions with content:
- * later no-drag rects (`.fm-rail-slot`, the scrolled `.fm-inner` subtree)
- * covered the band after the old first-child `.fm-frame-strip`.
+ * no-drag rects (`.fm-rail-slot`, the scrolled `.fm-inner` subtree) covered the
+ * band after the drag surface. The surface is the last overlay child carrying
+ * `data-window-drag` — since the merged-titlebar redesign that is the
+ * `.fm-topbar` row itself (0.13.x used a separate `.fm-frame-strip`).
  *
  * Inherited property: on the 0.2.2 desktop runtime (Electron 44.7 / Chrome
  * 152) this is the standardised, inherited `window-drag` property (`move` /
  * `none`), so every descendant of the overlay root — which the official
  * darwin CSS marks no-drag because it has `tabindex=-1` — is itself a no-drag
- * rect. The Playwright Chromium used by the e2e harness is older (151): it only
+ * rect unless it opts into drag. The Playwright Chromium used by the e2e
+ * harness is older (151): it only
  * knows the legacy, NON-inherited `-webkit-app-region`/`app-region`, and a
  * child of a drag/no-drag element computes `none` (verified; `CSS.supports
  * ('window-drag','move')` is false). This helper therefore reconstructs the
@@ -821,7 +877,7 @@ function readZLeaks() {
  *   nativeInheritance: boolean,
  *   regionCount: number,
  *   probes: Array<{point: {x: number, y: number}, draggable: boolean, winner: object|null}>,
- *   strip: object|null,
+ *   surface: object|null,
  *   overlay: object|null,
  *   band: object|null,
  * }}
@@ -862,6 +918,10 @@ export function probeDragRegions({ points = [], bandTop = null } = {}) {
 
   // Document pre-order = the renderer's layout-tree order for these boxes.
   const regions = []
+  // Parallel array: the element each region was collected from. Needed to tell
+  // "no-drag rect AFTER the drag surface" (ordering bug) apart from "no-drag
+  // rect of a control INSIDE the surface" (the exit button, by design).
+  const regionElements = []
   const walk = (element, inheritedRegion) => {
     const style = getComputedStyle(element)
     const own = readRegion(style)
@@ -885,6 +945,7 @@ export function probeDragRegions({ points = [], bandTop = null } = {}) {
             bottom: round(box.bottom),
           }),
         })
+        regionElements.push(element)
       }
     }
     for (const child of element.children) walk(child, region)
@@ -909,21 +970,33 @@ export function probeDragRegions({ points = [], bandTop = null } = {}) {
   })
 
   const overlay = document.querySelector('.fm-overlay')
-  const strip = document.querySelector('.fm-frame-strip')
-  const stripRegion = strip
-    ? regions.find((region) => /(^|\s)fm-frame-strip(\s|$)/.test(region.cls)) || null
+  // The drag surface = the overlay's last rendered child that explicitly claims
+  // the band with a drag region: the merged title row on macOS, the separate
+  // `.fm-frame-strip` on Windows.
+  const surface = overlay
+    ? [...overlay.children].filter((element) => {
+        if (!element.hasAttribute('data-window-drag')) return false
+        const style = getComputedStyle(element)
+        if (style.display === 'none') return false
+        return readRegion(style) === 'drag'
+      }).pop() || null
     : null
+  const surfaceRegionIndex = surface ? regionElements.indexOf(surface) : -1
+  const surfaceRegion = surfaceRegionIndex >= 0 ? regions[surfaceRegionIndex] : null
 
   // Band diagnostics make the assertion non-vacuous: they count the no-drag
-  // rects that overlap the reserved titlebar band and come BEFORE the strip in
-  // the ordered list. The fix is precisely that none come after it.
+  // rects that overlap the reserved titlebar band and come BEFORE the surface in
+  // the ordered list. The contract is precisely that none come after it except
+  // the surface's own interactive controls (which must stay clickable).
   let band = null
   if (Number.isFinite(bandTop) && bandTop > 0) {
     const overlapsBand = (box) =>
       box.right > 0 && box.left < viewport.width && box.top < bandTop && box.bottom > 0
     const noDrag = regions.filter((region) => region.region === 'no-drag' && overlapsBand(region.rect))
-    const before = stripRegion ? noDrag.filter((region) => region.index < stripRegion.index) : noDrag
-    const after = stripRegion ? noDrag.filter((region) => region.index > stripRegion.index) : []
+    const isInsideSurface = (region) => Boolean(surface && surface.contains(regionElements[region.index]))
+    const before = noDrag.filter((region) => region.index < surfaceRegionIndex)
+    const after = noDrag.filter((region) => region.index > surfaceRegionIndex && !isInsideSurface(region))
+    const surfaceControls = noDrag.filter((region) => region.index > surfaceRegionIndex && isInsideSurface(region))
     const summarize = (region) => ({
       tag: region.tag,
       cls: region.cls,
@@ -934,8 +1007,9 @@ export function probeDragRegions({ points = [], bandTop = null } = {}) {
     band = {
       top: bandTop,
       noDragOverlapping: noDrag.length,
-      noDragBeforeStrip: before.length,
-      noDragAfterStrip: after.length,
+      noDragBeforeSurface: before.length,
+      noDragAfterSurface: after.length,
+      surfaceControlNoDrag: surfaceControls.length,
       // Laid-out boxes above the band's bottom edge: scrolled content keeps
       // negative-y rects (`.fm-inner`, `.fm-msg`, ...) once `.fm-body` scrolls.
       scrolled: noDrag.filter((region) => region.rect.top < 0 || region.rect.bottom <= 0).length,
@@ -951,20 +1025,28 @@ export function probeDragRegions({ points = [], bandTop = null } = {}) {
     nativeInheritance,
     regionCount: regions.length,
     probes,
-    strip: strip
+    surface: surface
       ? {
-          region: stripRegion ? stripRegion.region : readRegion(getComputedStyle(strip)),
-          inherited: stripRegion ? stripRegion.inherited : null,
-          index: stripRegion ? stripRegion.index : null,
-          rect: stripRegion ? stripRegion.rect : null,
-          childIndex: overlay ? [...overlay.children].indexOf(strip) : null,
+          tag: surface.tagName.toLowerCase(),
+          cls: String(surface.className || ''),
+          // First/last region indices this element contributed to the ordered
+          // list; the band contract is "no no-drag rect after the surface".
+          isTopbar: Boolean(surface.classList.contains('fm-topbar')),
+          region: surfaceRegion ? surfaceRegion.region : readRegion(getComputedStyle(surface)),
+          inherited: surfaceRegion ? surfaceRegion.inherited : null,
+          index: surfaceRegionIndex >= 0 ? surfaceRegionIndex : null,
+          rect: surfaceRegion ? surfaceRegion.rect : null,
+          childIndex: overlay ? [...overlay.children].indexOf(surface) : null,
+          isLastChild: Boolean(overlay && overlay.lastElementChild === surface),
+          dataWindowDrag: surface.hasAttribute('data-window-drag'),
         }
       : null,
     overlay: overlay
       ? {
           childCount: overlay.children.length,
           lastChildClass: overlay.lastElementChild ? String(overlay.lastElementChild.className || '') : null,
-          stripIsLastChild: overlay.lastElementChild === strip,
+          surfaceIsLastChild: Boolean(surface && overlay.lastElementChild === surface),
+          frameStripLastChild: Boolean(overlay.querySelector('.fm-frame-strip') && overlay.lastElementChild === overlay.querySelector('.fm-frame-strip')),
         }
       : null,
     band,

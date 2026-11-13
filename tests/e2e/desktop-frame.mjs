@@ -7,23 +7,29 @@
  * `<html>`: `data-platform="darwin"` (macOS traffic lights at x16,y18,
  * ~60.7×14), `data-windows-titlebar` + `--dsh-windows-titlebar-height:40px`
  * (Windows native caption zone top-right), and `data-fullscreen` on both.
- * The official layout turns those into `--dsh-frame-top-clearance` (48 / 40)
- * and `--dsh-frame-overlay-top` (clearance + 20px, i.e. 68 / 60, 20 fullscreen).
- * The focus overlay must reserve that strip and keep the window draggable
- * without putting anything focusable under the traffic lights / caption
- * buttons, while the plain web generation must stay pixel-identical.
+ * The official layout publishes `--dsh-frame-top-clearance` (48 / 40) and
+ * `--dsh-frame-overlay-top` (clearance + 20px, i.e. 68 / 60).
+ * The focus overlay reserves ONLY the traffic-light / caption clearance
+ * (`--dsh-frame-top-clearance`, or a compact 40px titlebar row in native
+ * fullscreen) and merges its own title row INTO that band: the row is the
+ * overlay's LAST child and is the window drag surface, with its exit control
+ * explicitly no-drag. The 20px dialog gap and the extra 48px titlebar row the
+ * old layout stacked underneath the band are gone. The plain web generation
+ * must stay pixel-identical (topbar in normal flow, no band).
  *
  * This script asserts that contract for:
- *   plain web      — overlay mounts, user bubbles render, topbar at y≈0,
- *                    strip collapsed to 0, Esc exits;
- *   darwin         — topbar ≥48 (expected 68), strip 0→68 at y=0,
- *                    aria-hidden, data-window-drag, NO tabindex (a tabindex
- *                    would match the official `[tabindex]{-webkit-app-region:
- *                    no-drag}` rule and silently kill the drag band),
- *                    0 focusables, computed app-region "drag";
- *   win32          — topbar ≥40 (expected 60), strip 60, exit clear of the
+ *   plain web      — overlay mounts, user bubbles render, topbar at y≈0 in
+ *                    normal flow, no frame band, no drag surface, Esc exits;
+ *   darwin         — band 48px: overlay padding-top 48, title row y=0 h=48
+ *                    spanning the viewport and merged with the traffic lights
+ *                    (title left ≥ 88), body starts at 48, exit clear of the
+ *                    traffic-light box, exit control no-drag, row is the last
+ *                    overlay child + declared drag region, legacy
+ *                    `.fm-frame-strip` gone;
+ *   win32          — band 40px, same merged-row contract, exit clear of the
  *                    top-right caption zone {x ≥ vw-138, y < 40};
- *   darwin/win32 + fullscreen — topbar ≈20 (16..32), no stale 48/40 clearance.
+ *   darwin/win32 + fullscreen — band 40px (compact row; no stale 48/40
+ *                    clearance, no dialog gap).
  * Esc must exit in every mode.
  *
  * Windows z-leak follow-up (0.2.2 desktop renderer): dsh-client-ui-sidebar
@@ -99,36 +105,129 @@ function skip(mode, label, reason) {
   console.log(`  – ${label} — skipped: ${reason}`)
 }
 
-/** Assert the strip is a real drag band. Chromium normally exposes
- *  `-webkit-app-region` via getComputedStyle; if a headless build returns
- *  empty, fall back to the attribute + height contract. */
-function checkDragRegion(mode, strip, minHeight) {
-  if (!strip) {
-    check(mode, 'frame strip exists', false, 'no .fm-frame-strip element')
-    return
-  }
-  if (strip.appRegion) {
-    check(mode, 'frame strip is a drag region (computed -webkit-app-region)', strip.appRegion === 'drag', `app-region=${strip.appRegion}`)
-  } else {
-    check(
-      mode,
-      'frame strip is a drag region (fallback: data-window-drag + height; computed app-region empty in this Chromium)',
-      strip.dataWindowDrag && strip.heightPx >= minHeight,
-      `data-window-drag=${strip.dataWindowDrag}, h=${px(strip.heightPx)}`,
-    )
-  }
+/** Shared contract of the DESKTOP BAND, split per platform:
+ *  - macOS: the overlay reserves only the traffic-light clearance and the title
+ *    row is merged INTO it — the row is also the window drag surface itself.
+ *  - Windows: the caption band must stay chrome (native caption buttons + the
+ *    web caption menubar paints above the overlay), so the band is reserved
+ *    empty and the title row sits directly BELOW it; the separate
+ *    `.fm-frame-strip` owns the band drag.
+ *  Both drop the official +20px dialog gap and are far tighter than 0.13.x. */
+
+/** macOS: title row merged into the traffic-light band, is the drag surface. */
+function checkMacMergedBand(mode, m, band) {
+  const pass = (label, ok, detail = '') => check(mode, label, ok, detail)
+  const overlayPadding = m.overlay ? Number.parseFloat(m.overlay.paddingTop) : NaN
+  pass(
+    `overlay reserves exactly the merged ${band}px band (padding-top)`,
+    approx(overlayPadding, band),
+    m.overlay ? `padding-top=${m.overlay.paddingTop}, --fm-frame-band=${JSON.stringify(m.overlay.frameBandVar)}` : 'no overlay',
+  )
+  pass(
+    '--fm-frame-band resolves to the official clearance (no +20px dialog gap)',
+    Boolean(m.overlay) && m.overlay.frameBandVar === `${band}px`,
+    m.overlay ? m.overlay.frameBandVar : 'no overlay',
+  )
+  pass(
+    'title row is merged into the band (top = 0, absolute in-band)',
+    Boolean(m.topbar) && approx(m.topbar.rect.top, 0) && m.topbar.position === 'absolute',
+    m.topbar ? `topbar.top=${px(m.topbar.rect.top)}, position=${m.topbar.position}` : 'no .fm-topbar',
+  )
+  pass(
+    'title row height equals the band (no second 48px bar underneath)',
+    Boolean(m.topbar) && approx(m.topbar.heightPx, band),
+    m.topbar ? `h=${px(m.topbar.heightPx)} (band=${band})` : 'no .fm-topbar',
+  )
+  pass(
+    'title row spans the viewport at the top',
+    Boolean(m.topbar) && approx(m.topbar.rect.left, 0) && m.topbar.rect.width >= m.viewport.width - 1,
+    m.topbar ? `left=${px(m.topbar.rect.left)}, width=${px(m.topbar.rect.width)}` : 'no .fm-topbar',
+  )
+  pass(
+    'transcript starts immediately below the band (space reclaimed)',
+    Boolean(m.body) && approx(m.body.rect.top, band),
+    m.body ? `body.top=${px(m.body.rect.top)} (expected ${band})` : 'no .fm-body',
+  )
+  pass(
+    'title row declares the drag region (data-window-drag + computed app-region drag)',
+    Boolean(m.topbar) && m.topbar.dataWindowDrag && m.topbar.appRegion === 'drag',
+    m.topbar ? `data-window-drag=${m.topbar.dataWindowDrag}, app-region=${JSON.stringify(m.topbar.appRegion)}` : 'no .fm-topbar',
+  )
+  pass(
+    'title row IS the overlay’s drag surface (band-height drag claim)',
+    Boolean(m.dragSurface) && m.dragSurface.isTopbar && m.dragSurface.appRegion === 'drag' && approx(m.dragSurface.heightPx, band),
+    m.dragSurface ? `cls=${JSON.stringify(m.dragSurface.cls)}, app-region=${JSON.stringify(m.dragSurface.appRegion)}, h=${px(m.dragSurface.heightPx)}` : 'no drag surface',
+  )
+  pass(
+    'the separate .fm-frame-strip is not rendered on macOS (merged into the row)',
+    Boolean(m.frameStrip) && m.frameStrip.displayed === false,
+    m.frameStrip ? `display=${m.frameStrip.display}` : 'no strip element',
+  )
+  pass(
+    'interactive control inside the band is excluded from the drag region (no-drag)',
+    Boolean(m.topbar) && m.topbar.controlCount >= 1 && m.topbar.controlRegions.every((control) => control.appRegion === 'no-drag'),
+    m.topbar
+      ? `${m.topbar.controlCount} control(s): ${m.topbar.controlRegions.map((control) => `${control.tag}(${control.appRegion || 'none'})`).join(', ')}`
+      : 'no .fm-topbar',
+  )
 }
 
-function checkStripCommon(mode, strip, viewportWidth) {
-  check(mode, 'frame strip exists', Boolean(strip))
-  if (!strip) return
-  check(mode, 'frame strip spans the viewport at y=0', strip.rect.top <= 1 && strip.widthPx >= viewportWidth - 1, `top=${px(strip.rect.top)}, width=${px(strip.widthPx)}`)
-  check(mode, 'frame strip is aria-hidden', strip.ariaHidden === 'true', `aria-hidden=${strip.ariaHidden}`)
-  check(mode, 'frame strip carries data-window-drag', strip.dataWindowDrag)
-  // On darwin, the official rule `html[data-platform=darwin] :is(…,[tabindex],…) {-webkit-app-region:no-drag}`
-  // matches any [tabindex] element and would silently disable dragging.
-  check(mode, 'frame strip has NO tabindex attribute', strip.tabIndexAttr === null, `tabindex=${strip.tabIndexAttr}`)
-  check(mode, 'frame strip contains no focusable elements', strip.focusableCount === 0, `${strip.focusableCount} focusable(s)${strip.focusableTags.length ? `: ${strip.focusableTags.join(',')}` : ''}`)
+/** Windows: caption band reserved as chrome, title row directly below it, the
+ *  separate strip owns the band drag. */
+function checkWindowsStackedBand(mode, m, band) {
+  const pass = (label, ok, detail = '') => check(mode, label, ok, detail)
+  const rowHeight = 40
+  const overlayPadding = m.overlay ? Number.parseFloat(m.overlay.paddingTop) : NaN
+  pass(
+    `overlay reserves the ${band}px caption band only (padding-top)`,
+    approx(overlayPadding, band),
+    m.overlay ? `padding-top=${m.overlay.paddingTop}, --fm-frame-band=${JSON.stringify(m.overlay.frameBandVar)}` : 'no overlay',
+  )
+  pass(
+    '--fm-frame-band resolves to the official caption height (no +20px gap)',
+    Boolean(m.overlay) && m.overlay.frameBandVar === `${band}px`,
+    m.overlay ? m.overlay.frameBandVar : 'no overlay',
+  )
+  pass(
+    'title row sits directly BELOW the caption band (not merged under the menubar)',
+    Boolean(m.topbar) && approx(m.topbar.rect.top, band) && m.topbar.position === 'static',
+    m.topbar ? `topbar.top=${px(m.topbar.rect.top)} (expected ${band}), position=${m.topbar.position}` : 'no .fm-topbar',
+  )
+  pass(
+    `title row height is the compact ${rowHeight}px row`,
+    Boolean(m.topbar) && approx(m.topbar.heightPx, rowHeight),
+    m.topbar ? `h=${px(m.topbar.heightPx)}` : 'no .fm-topbar',
+  )
+  pass(
+    'title row spans the viewport',
+    Boolean(m.topbar) && approx(m.topbar.rect.left, 0) && m.topbar.rect.width >= m.viewport.width - 1,
+    m.topbar ? `left=${px(m.topbar.rect.left)}, width=${px(m.topbar.rect.width)}` : 'no .fm-topbar',
+  )
+  pass(
+    'title row is NOT a window drag region on Windows (menubar/native caption own the band)',
+    Boolean(m.topbar) && m.topbar.appRegion !== 'drag',
+    m.topbar ? `app-region=${JSON.stringify(m.topbar.appRegion)}` : 'no .fm-topbar',
+  )
+  pass(
+    'separate .fm-frame-strip is rendered over the caption band',
+    Boolean(m.frameStrip) && m.frameStrip.displayed && approx(m.frameStrip.rect.top, 0) && approx(m.frameStrip.rect.height, band) && m.frameStrip.rect.width >= m.viewport.width - 1,
+    m.frameStrip ? `display=${m.frameStrip.display}, rect=${JSON.stringify({ x: Math.round(m.frameStrip.rect.x), y: Math.round(m.frameStrip.rect.y), w: Math.round(m.frameStrip.rect.width), h: Math.round(m.frameStrip.rect.height) })}` : 'no strip element',
+  )
+  pass(
+    'captioned strip is the overlay’s LAST child and the drag surface',
+    Boolean(m.frameStrip) && m.frameStrip.isLastChild && m.frameStrip.appRegion === 'drag' && Boolean(m.dragSurface) && !m.dragSurface.isTopbar && m.dragSurface.isLastChild,
+    m.frameStrip ? `stripLast=${m.frameStrip.isLastChild}, strip-region=${JSON.stringify(m.frameStrip.appRegion)}, surface=${JSON.stringify(m.dragSurface?.cls ?? null)}` : 'no strip element',
+  )
+  pass(
+    'transcript starts below the caption band + title row',
+    Boolean(m.body) && Boolean(m.topbar) && approx(m.body.rect.top, m.topbar.rect.bottom),
+    m.body && m.topbar ? `body.top=${px(m.body.rect.top)}, row.bottom=${px(m.topbar.rect.bottom)}` : 'missing overlay children',
+  )
+  pass(
+    'exit control sits in the title row, clear of the native caption band',
+    Boolean(m.exit) && m.exit.rect.top >= band,
+    m.exit ? `exit.top=${px(m.exit.rect.top)} (caption band ends at ${band})` : 'no exit button',
+  )
 }
 
 const gui = await ensureGui()
@@ -168,16 +267,38 @@ try {
     const run = await openAndMeasure(mode, { platform: null, fullscreen: false })
     const m = run.measurement
     const topbarTop = m.topbar ? m.topbar.rect.top : NaN
-    const stripH = m.strip ? m.strip.heightPx : NaN
-    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, stripH, esc: '' })
+    const topbarH = m.topbar ? m.topbar.heightPx : NaN
+    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, band: 0, esc: '' })
 
     check(mode, 'overlay mounts', run.mounted)
     check(mode, 'renders ≥1 user bubble', m.userBubbleCount >= 1, `${m.userBubbleCount}`)
     check(mode, 'single overlay instance', m.overlayCount === 1, `${m.overlayCount}`)
-    check(mode, 'topbar sits at the viewport top (no frame padding)', Number.isFinite(topbarTop) && topbarTop >= -1 && topbarTop <= 1, `topbar.top=${px(topbarTop)}`)
-    check(mode, 'overlay reserves no frame padding', m.overlay && Number.parseFloat(m.overlay.paddingTop) === 0, m.overlay ? `padding-top=${m.overlay.paddingTop}` : 'no overlay')
+    check(mode, 'title row sits at the viewport top (no frame padding)', Number.isFinite(topbarTop) && approx(topbarTop, 0), `topbar.top=${px(topbarTop)}`)
+    check(
+      mode,
+      'overlay reserves no frame band',
+      Boolean(m.overlay) && Number.parseFloat(m.overlay.paddingTop) === 0 && m.overlay.frameBandVar === '0px',
+      m.overlay ? `padding-top=${m.overlay.paddingTop}, --fm-frame-band=${JSON.stringify(m.overlay.frameBandVar)}` : 'no overlay',
+    )
     check(mode, 'desktop frame variables are undefined', m.frameVars['--dsh-frame-overlay-top'] === '' && m.frameVars['--dsh-windows-titlebar-height'] === '', `overlay-top=${JSON.stringify(m.frameVars['--dsh-frame-overlay-top'])}, win-height=${JSON.stringify(m.frameVars['--dsh-windows-titlebar-height'])}`)
-    check(mode, 'frame strip collapses to 0 height', m.strip && m.strip.heightPx === 0, m.strip ? `h=${px(stripH)}` : 'no strip')
+    check(
+      mode,
+      'title row stays in normal flow (not the desktop in-band drag surface)',
+      Boolean(m.topbar) && m.topbar.position === 'static' && m.topbar.appRegion !== 'drag',
+      m.topbar ? `position=${m.topbar.position}, app-region=${JSON.stringify(m.topbar.appRegion)}, content-h=${px(topbarH)}` : 'no .fm-topbar',
+    )
+    check(
+      mode,
+      'transcript follows the title row in flow (web layout unchanged)',
+      Boolean(m.body) && Boolean(m.topbar) && approx(m.body.rect.top, m.topbar.rect.bottom),
+      m.body && m.topbar ? `body.top=${px(m.body.rect.top)}, topbar.bottom=${px(m.topbar.rect.bottom)}` : 'missing overlay children',
+    )
+    check(
+      mode,
+      'no drag surface on the plain web (title row is not a drag claim, strip not rendered)',
+      m.dragSurface === null && Boolean(m.frameStrip) && m.frameStrip.displayed === false,
+      `dragSurface=${m.dragSurface === null ? 'none' : m.dragSurface.cls}, strip display=${JSON.stringify(m.frameStrip?.display)}`,
+    )
     console.log(`  ℹ z-leak scan: ${run.zLeaks.leaks.length} leak(s), ${run.zLeaks.candidates.length} fixed/sticky z≥20 candidate(s) (not asserted in plain mode)`)
 
     const esc = run.mounted ? await sim.exitOverlay() : { exited: false, presses: 0 }
@@ -196,18 +317,23 @@ try {
     const run = await openAndMeasure(mode, { platform: 'darwin', fullscreen: false })
     const m = run.measurement
     const topbarTop = m.topbar ? m.topbar.rect.top : NaN
-    const strip = m.strip
-    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, stripH: strip ? strip.heightPx : NaN, esc: '' })
+    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, band: 48, esc: '' })
 
     check(mode, 'overlay mounts', run.mounted)
     check(mode, 'renders ≥1 user bubble', m.userBubbleCount >= 1, `${m.userBubbleCount}`)
     check(mode, 'html carries data-platform=darwin', m.html.platform === 'darwin')
     check(mode, 'official --dsh-frame-top-clearance resolves to 48px', m.frameVars['--dsh-frame-top-clearance'] === '48px', m.frameVars['--dsh-frame-top-clearance'])
-    check(mode, 'topbar clears the traffic lights (top ≥ 48)', Number.isFinite(topbarTop) && topbarTop >= 48, `topbar.top=${px(topbarTop)}`)
-    check(mode, 'topbar reserves 48px clearance + 20px gap (≈68px)', approx(topbarTop, 68), `topbar.top=${px(topbarTop)}`)
+    checkMacMergedBand(mode, m, 48)
     {
       // Native traffic lights: x 16..77 (≈60.7 wide), y 18..32.
       const trafficLights = { x: 16, y: 18, width: 61, height: 14 }
+      const titleRect = m.topbar && m.topbar.title ? m.topbar.title.rect : null
+      check(
+        mode,
+        'title text clears the traffic-light box (left ≥ 88, the official leading seat)',
+        Boolean(titleRect) && titleRect.left >= 88 && !intersects(titleRect, trafficLights),
+        titleRect ? `title.left=${px(titleRect.left)}, title=${JSON.stringify(m.topbar.title.text)}` : 'no .fm-title inside the title row',
+      )
       const exitRect = m.exit ? m.exit.rect : null
       check(
         mode,
@@ -217,14 +343,6 @@ try {
           ? `exit=${JSON.stringify({ x: Math.round(exitRect.x), y: Math.round(exitRect.y), w: Math.round(exitRect.width), h: Math.round(exitRect.height) })}`
           : 'no exit button found in the overlay',
       )
-    }
-    checkStripCommon(mode, strip, m.viewport.width)
-    if (strip) {
-      check(mode, 'frame strip height ≥ 48 (expected 68)', strip.heightPx >= 48, `h=${px(strip.heightPx)}`)
-      check(mode, 'frame strip height is 68px (48 clearance + 20 gap)', approx(strip.heightPx, 68), `h=${px(strip.heightPx)}`)
-      checkDragRegion(mode, strip, 48)
-    } else {
-      checkDragRegion(mode, null, 48)
     }
     check(
       mode,
@@ -251,21 +369,24 @@ try {
     const run = await openAndMeasure(mode, { platform: 'darwin', fullscreen: true })
     const m = run.measurement
     const topbarTop = m.topbar ? m.topbar.rect.top : NaN
-    const strip = m.strip
-    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, stripH: strip ? strip.heightPx : NaN, esc: '' })
+    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, band: 40, esc: '' })
 
     check(mode, 'overlay mounts', run.mounted)
     check(mode, 'renders ≥1 user bubble', m.userBubbleCount >= 1, `${m.userBubbleCount}`)
     check(mode, 'html carries data-platform=darwin + data-fullscreen', m.html.platform === 'darwin' && m.html.fullscreen === 'true')
-    check(mode, 'topbar top ≈20px (16..32)', Number.isFinite(topbarTop) && topbarTop >= 16 && topbarTop <= 32, `topbar.top=${px(topbarTop)}`)
-    check(mode, 'no 48px clearance remains', m.overlay && Number.parseFloat(m.overlay.paddingTop) <= 32, m.overlay ? `padding-top=${m.overlay.paddingTop}` : 'no overlay')
-    check(mode, 'overlay reserves exactly the 20px fullscreen gap', m.overlay && approx(Number.parseFloat(m.overlay.paddingTop), 20), m.overlay ? `padding-top=${m.overlay.paddingTop}` : 'no overlay')
-    if (strip) {
-      check(mode, 'frame strip collapses to the 20px fullscreen gap', approx(strip.heightPx, 20), `h=${px(strip.heightPx)}`)
-      check(mode, 'frame strip is still a drag region', strip.appRegion === 'drag' || strip.dataWindowDrag, strip.appRegion ? `app-region=${strip.appRegion}` : 'data-window-drag fallback')
-    } else {
-      skip(mode, 'frame strip geometry', 'no strip element in fullscreen (acceptable if drag band is not needed)')
-    }
+    check(
+      mode,
+      'official fullscreen --dsh-frame-overlay-top would be 20px (band var is ours, not the dialog inset)',
+      m.frameVars['--dsh-frame-overlay-top'] === '20px',
+      m.frameVars['--dsh-frame-overlay-top'],
+    )
+    checkMacMergedBand(mode, m, 40)
+    check(
+      mode,
+      'fullscreen title row drops the 88px traffic-light inset (no lights in fullscreen)',
+      Boolean(m.topbar && m.topbar.title) && m.topbar.title.rect.left >= 12 && m.topbar.title.rect.left < 48,
+      m.topbar && m.topbar.title ? `title.left=${px(m.topbar.title.rect.left)}` : 'no .fm-title inside the title row',
+    )
     console.log(`  ℹ z-leak scan: ${run.zLeaks.leaks.length} leak(s), ${run.zLeaks.candidates.length} candidate(s) (informational in fullscreen)`)
 
     const esc = run.mounted ? await sim.exitOverlay() : { exited: false, presses: 0 }
@@ -284,15 +405,13 @@ try {
     const run = await openAndMeasure(mode, { platform: 'win32', fullscreen: false })
     const m = run.measurement
     const topbarTop = m.topbar ? m.topbar.rect.top : NaN
-    const strip = m.strip
-    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, stripH: strip ? strip.heightPx : NaN, esc: '' })
+    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, band: 40, esc: '' })
 
     check(mode, 'overlay mounts', run.mounted)
     check(mode, 'renders ≥1 user bubble', m.userBubbleCount >= 1, `${m.userBubbleCount}`)
     check(mode, 'html carries data-windows-titlebar', m.html.windowsTitlebar === true)
     check(mode, 'official --dsh-windows-titlebar-height resolves to 40px', m.frameVars['--dsh-windows-titlebar-height'] === '40px', m.frameVars['--dsh-windows-titlebar-height'])
-    check(mode, 'topbar clears the native titlebar (top ≥ 40)', Number.isFinite(topbarTop) && topbarTop >= 40, `topbar.top=${px(topbarTop)}`)
-    check(mode, 'topbar reserves 40px titlebar + 20px gap (≈60px)', approx(topbarTop, 60), `topbar.top=${px(topbarTop)}`)
+    checkWindowsStackedBand(mode, m, 40)
     {
       // Native caption buttons: top-right, 40px tall, 138px wide.
       const captionZone = { x: m.viewport.width - 138, y: 0, width: 138, height: 40 }
@@ -305,14 +424,6 @@ try {
           ? `exit=${JSON.stringify({ x: Math.round(exitRect.x), y: Math.round(exitRect.y), w: Math.round(exitRect.width), h: Math.round(exitRect.height) })}, zone=${JSON.stringify(captionZone)}`
           : 'no exit button found in the overlay',
       )
-    }
-    checkStripCommon(mode, strip, m.viewport.width)
-    if (strip) {
-      check(mode, 'frame strip height ≥ 40 (expected 60)', strip.heightPx >= 40, `h=${px(strip.heightPx)}`)
-      check(mode, 'frame strip height is 60px (40 titlebar + 20 gap)', approx(strip.heightPx, 60), `h=${px(strip.heightPx)}`)
-      checkDragRegion(mode, strip, 40)
-    } else {
-      checkDragRegion(mode, null, 40)
     }
     check(
       mode,
@@ -358,21 +469,18 @@ try {
     const run = await openAndMeasure(mode, { platform: 'win32', fullscreen: true })
     const m = run.measurement
     const topbarTop = m.topbar ? m.topbar.rect.top : NaN
-    const strip = m.strip
-    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, stripH: strip ? strip.heightPx : NaN, esc: '' })
+    matrix.push({ mode, mounted: run.mounted, bubbles: m.userBubbleCount, topbarTop, band: 40, esc: '' })
 
     check(mode, 'overlay mounts', run.mounted)
     check(mode, 'renders ≥1 user bubble', m.userBubbleCount >= 1, `${m.userBubbleCount}`)
     check(mode, 'html carries data-windows-titlebar + data-fullscreen', m.html.windowsTitlebar === true && m.html.fullscreen === 'true')
-    check(mode, 'topbar top ≈20px (16..32)', Number.isFinite(topbarTop) && topbarTop >= 16 && topbarTop <= 32, `topbar.top=${px(topbarTop)}`)
-    check(mode, 'no 40px titlebar clearance remains', m.overlay && Number.parseFloat(m.overlay.paddingTop) <= 32, m.overlay ? `padding-top=${m.overlay.paddingTop}` : 'no overlay')
-    check(mode, 'overlay reserves exactly the 20px fullscreen gap', m.overlay && approx(Number.parseFloat(m.overlay.paddingTop), 20), m.overlay ? `padding-top=${m.overlay.paddingTop}` : 'no overlay')
-    if (strip) {
-      check(mode, 'frame strip collapses to the 20px fullscreen gap', approx(strip.heightPx, 20), `h=${px(strip.heightPx)}`)
-      check(mode, 'frame strip is still a drag region', strip.appRegion === 'drag' || strip.dataWindowDrag, strip.appRegion ? `app-region=${strip.appRegion}` : 'data-window-drag fallback')
-    } else {
-      skip(mode, 'frame strip geometry', 'no strip element in fullscreen (acceptable if drag band is not needed)')
-    }
+    check(
+      mode,
+      'official fullscreen --dsh-frame-overlay-top would be 20px (band var is ours, not the dialog inset)',
+      m.frameVars['--dsh-frame-overlay-top'] === '20px',
+      m.frameVars['--dsh-frame-overlay-top'],
+    )
+    checkWindowsStackedBand(mode, m, 40)
     console.log(`  ℹ z-leak scan: ${run.zLeaks.leaks.length} leak(s), ${run.zLeaks.candidates.length} candidate(s) (informational in fullscreen); sidebar toggle hidden=${run.toggle.count > 0 ? run.toggle.allHidden : 'n/a'}`)
 
     const esc = run.mounted ? await sim.exitOverlay() : { exited: false, presses: 0 }
@@ -422,11 +530,11 @@ try {
     const screenshot = await sim.screenshot(`desktop-frame-${mode}.png`)
     const topbarTop = measurement.topbar ? measurement.topbar.rect.top : NaN
     report.runs.push({ mode, viewport: measurement.viewport, before, open, measurement, zLeaks, screenshot })
-    matrix.push({ mode, mounted, bubbles: measurement.userBubbleCount, topbarTop, stripH: measurement.strip ? measurement.strip.heightPx : NaN, esc: '' })
+    matrix.push({ mode, mounted, bubbles: measurement.userBubbleCount, topbarTop, band: 40, esc: '' })
 
     check(mode, 'overlay mounts', mounted)
     check(mode, 'renders ≥1 user bubble', measurement.userBubbleCount >= 1, `${measurement.userBubbleCount}`)
-    check(mode, '.fm-topbar top ≈60px (40px native titlebar + 20px gap)', Number.isFinite(topbarTop) && topbarTop >= 40 && approx(topbarTop, 60), `topbar.top=${px(topbarTop)}`)
+    checkWindowsStackedBand(mode, measurement, 40)
     check(
       mode,
       'new-session button is hidden while focus is on (display none)',
@@ -509,12 +617,12 @@ try {
 
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n=== desktop frame matrix ===')
-const header = ['mode', 'mounted', 'bubbles', 'topbarTop', 'stripH', 'Esc']
-const widths = [28, 9, 8, 10, 8, 10]
+const header = ['mode', 'mounted', 'bubbles', 'topbarTop', 'band', 'Esc']
+const widths = [28, 9, 8, 11, 6, 10]
 const row = (cells) => cells.map((cell, i) => String(cell).padEnd(widths[i])).join('')
 console.log(row(header))
 for (const entry of matrix) {
-  console.log(row([entry.mode, entry.mounted ? '✓' : '✗', entry.bubbles, px(entry.topbarTop), px(entry.stripH), entry.esc || '–']))
+  console.log(row([entry.mode, entry.mounted ? '✓' : '✗', entry.bubbles, px(entry.topbarTop), px(entry.band), entry.esc || '–']))
 }
 console.log(`\nchecks: ${counts.pass} passed, ${counts.fail} failed, ${counts.skip} skipped`)
 if (skips.length) {

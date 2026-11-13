@@ -62,6 +62,18 @@ Everything below was verified on the user's machine; paths are absolute.
     `padding-top: calc(<inset> + var(--dsh-frame-top-clearance,0px))` on darwin.
   - `body > :not(#root)` is `no-drag` on darwin; our overlay lives inside `#root`
     (`shell.overlay` layer), so it can opt into drag with `data-window-drag`.
+- Focus overlay top-band mapping (tuned 2026-11-13): the overlay reserves ONLY
+  `--dsh-frame-top-clearance` through its own `--fm-frame-band` (never
+  `--dsh-frame-overlay-top` — that is clearance + 20px for dialogs/menus).
+  - macOS: the title row is merged INTO the band (absolute, top 0, h = band,
+    title left 88px past the traffic lights, exit button no-drag) and is itself
+    the drag claim (`data-window-drag` + drag declaration); the separate
+    `.fm-frame-strip` is `display:none`. Native fullscreen: band 40px, title
+    left 16px.
+  - Windows: the band is NOT merged into — the preload caption menubar
+    (`[data-windows-menu]`) paints above the overlay inside that band and must
+    stay visible. The title row is a 40px row directly below the band; the
+    separate `.fm-frame-strip` (overlay's last child, drag) claims the band.
 
 ## The plugin surface being adapted
 
@@ -206,7 +218,10 @@ mind for any window-chrome / drag work:
 - `-webkit-app-region` is **inherited**, and the official darwin CSS marks
   `[tabindex]`, `button`, roles, … as `no-drag`. The focus overlay root is
   `tabIndex={-1}` → every overlay descendant is a no-drag rect unless it sets
-  `drag` explicitly (the `.fm-frame-strip`).
+  `drag` explicitly. Who claims the band: macOS merges the title row into the
+  band (`.fm-topbar`, rendered last among band-claiming boxes) and hides the
+  legacy `.fm-frame-strip`; Windows keeps a separate `.fm-frame-strip` as the
+  overlay's last child because the title row sits below the caption band.
 - Layout rects are **not clipped** by ancestor overflow: scrolled content keeps
   negative-y rects, and `position:absolute;inset:0` wrappers (`.fm-rail-slot`)
   are full-viewport rects. Both overlap the reserved titlebar band and, if they

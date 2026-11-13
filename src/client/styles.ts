@@ -2,29 +2,38 @@
 import { LIFT_MAX_WIDTH } from './model'
 
 export const FOCUS_CSS = `
-.fm-overlay{position:fixed;inset:0;z-index:2147483000;box-sizing:border-box;padding-top:var(--dsh-frame-overlay-top,0px);background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
-/* Desktop window frame (dsh desktop 0.2.2+, macOS and Windows): the shell's
-   hidden native titlebar area is web content owned by whatever fills the
-   viewport, so this overlay reserves it via *.fm-overlay's padding-top and
-   provides the drag surface itself. Heights come from the official layout
-   variables set on <html> by dsh-client-ui-layout (+ the desktop preload for
-   --dsh-windows-titlebar-height); the 0px fallback keeps the plain web
-   generation pixel-identical. On macOS the shell's own
-   [data-window-drag]{-webkit-app-region:drag} applies; the explicit
-   app-region also makes the strip draggable in the Windows renderer.
-   pointer-events stays enabled: a drag region must be hit-testable.
-   The strip is rendered as the overlay's LAST child on purpose: Electron
-   keeps the renderer's app-region rects in layout-tree order and the later
-   rect wins where rects overlap, and every overlay descendant is no-drag
-   here because the overlay root (tabindex=-1) is marked no-drag by the
-   official darwin CSS and the property inherits — see the ordering note in
-   FocusView.tsx. */
-.fm-frame-strip{position:absolute;top:0;left:0;right:0;height:var(--dsh-frame-overlay-top,0px);flex:none;-webkit-app-region:drag;-webkit-user-select:none;user-select:none;z-index:0}
+.fm-overlay{position:fixed;inset:0;z-index:2147483000;box-sizing:border-box;--fm-frame-band:0px;padding-top:var(--fm-frame-band);background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1a1a1a);display:flex;flex-direction:column;pointer-events:auto;font-family:var(--dsw-font-family,sans-serif);outline:none}
+/* Desktop window frame (dsh desktop 0.2.2+, macOS and Windows) — the top band.
+   The shell's hidden native titlebar area is ordinary web content owned by
+   whatever fills the viewport, and the official layout publishes the
+   clearance on <html> (dsh-client-ui-layout + the desktop preload):
+   --dsh-frame-top-clearance is 48px on macOS (traffic lights: x16..77,
+   y18..32) and the 40px caption height on Windows (--dsh-windows-titlebar-
+   height). The overlay reserves EXACTLY that band, not
+   --dsh-frame-overlay-top — that variable is clearance + 20px because the
+   official full-window surfaces are dialogs that want a gap; a full-window
+   reading surface must not pay the dialog gap.
+   macOS: the band holds nothing but the traffic lights, so the focus title row
+   is merged INTO it (see .fm-topbar) and the transcript starts right below it;
+   native fullscreen has no traffic lights, so the band shrinks to a compact
+   40px title row.
+   Windows: the band is NOT merged into, because the preload-injected web
+   caption MENUBAR ([data-windows-menu], shadow DOM, z-index 1100) sits at the
+   top-left of that band ABOVE this overlay (the overlay lives inside the
+   official z-20 shell.overlay stacking context) and must stay visible — it is
+   the only app menu. Merging the title row into the band would hide the title
+   behind the menubar, so Windows keeps the band as caption chrome and puts the
+   title row directly underneath it (see the win32 rules below).
+   The 0px fallback keeps the plain web generation pixel-identical (no band;
+   the topbar sits in normal flow). */
+html[data-platform=darwin] .fm-overlay{--fm-frame-band:var(--dsh-frame-top-clearance,48px)}
+html[data-platform=darwin][data-fullscreen] .fm-overlay{--fm-frame-band:40px}
+html[data-windows-titlebar] .fm-overlay{--fm-frame-band:var(--dsh-windows-titlebar-height,40px)}
 /* Windows desktop: dsh-client-ui-sidebar promotes the sidebar collapse toggle
    to a fixed z-30 layer itself, above the official shell.overlay layer (z-20)
    that hosts this overlay — so without this rule the toggle floats above focus
-   mode inside the titlebar band and steals clicks/drags from the drag strip
-   (macOS keeps it behind the overlay). Hide it exactly while focus is on; it
+   mode inside the titlebar band and steals clicks/drags from the merged
+   title row's drag band (macOS keeps it behind the overlay). Hide it exactly while focus is on; it
    comes back with the rest of the chrome when focus exits. */
 html[data-windows-titlebar] body[data-fm-focus] [data-sidebar-toggle]{display:none!important}
 /* Same Windows titlebar band: when the official sidebar is collapsed (user
@@ -36,7 +45,38 @@ html[data-windows-titlebar] body[data-fm-focus] [data-sidebar-toggle]{display:no
    the only stable hook the shipped CSS exposes; the e2e desktop-frame leak
    guard fails loudly if a future build renames it. */
 html[data-windows-titlebar] body[data-fm-focus] [class*="newSession"]{display:none!important}
-.fm-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));flex:0 0 auto}
+/* Focus titlebar row. Plain web: an ordinary flow row above the body (it is
+   the overlay's last-but-one DOM child because the Windows drag strip follows
+   it; order:-1 keeps it visually first here).
+   macOS desktop: merged INTO the reserved band — absolutely positioned over
+   the overlay's padding-top area, exactly as tall as the band, so the title
+   shares the line with the native traffic lights instead of stacking another
+   48px bar underneath an empty band. The title is cleared past the traffic
+   lights (they end at x≈76.7; the official leading seat uses left:88). This
+   row IS the macOS drag surface: data-window-drag (the official darwin rule)
+   plus an explicit app-region declaration, with every interactive descendant
+   excluded so controls inside the band stay clickable (darwin's official
+   no-drag for button/[tabindex] is repeated here so the contract is local).
+   Windows desktop: the caption band above is owned by the native caption
+   buttons and the web caption menubar (which paints above the overlay), so the
+   title row is an ordinary row BELOW that band — no drag region here and no
+   overlap with the menubar; the Windows drag surface is the separate
+   .fm-frame-strip over the band. */
+.fm-topbar{order:-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.12));flex:0 0 auto}
+html[data-platform=darwin] .fm-topbar{position:absolute;top:0;left:0;right:0;height:var(--fm-frame-band);box-sizing:border-box;margin:0;padding:0 16px 0 88px;z-index:4;-webkit-app-region:drag;-webkit-user-select:none;user-select:none}
+html[data-platform=darwin][data-fullscreen] .fm-topbar{padding:0 16px}
+html[data-platform=darwin] .fm-topbar :is(button,a,input,select,textarea,summary,[contenteditable=true],[tabindex]){-webkit-app-region:no-drag}
+html[data-windows-titlebar] .fm-topbar{height:40px;box-sizing:border-box;margin:0;padding:0 16px;flex:0 0 40px}
+/* Windows desktop drag band: the 40px caption band above the title row is
+   ordinary overlay background, with the web caption menubar (painted above the
+   overlay) at its left and the native caption buttons (OS overlay) at its
+   right. This strip claims the band as the window drag surface; it is the
+   overlay's LAST child because Electron applies the renderer's app-region
+   rects in layout-tree order and the later rect wins (see FocusView.tsx).
+   Hidden on the plain web and on macOS, where the merged title row itself is
+   the drag surface and there is no separate element to claim. */
+.fm-frame-strip{display:none}
+html[data-windows-titlebar] .fm-frame-strip{display:block;position:absolute;top:0;left:0;right:0;height:var(--fm-frame-band);-webkit-app-region:drag;-webkit-user-select:none;user-select:none;z-index:0}
 .fm-title{font-size:calc(14px + var(--dsh-content-font-delta,0px));font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-body-wrap{position:relative;flex:1 1 auto;display:flex;min-height:0}
 .fm-body{flex:1 1 auto;min-width:0;overflow-y:auto;padding:28px 28px 160px}

@@ -24,7 +24,7 @@
 - **自动专注与提醒** —— 回复正常完成后可自动进入专注并定位到你的提问；专注中收到新回复、或 AI 等待你回答时弹出提醒
 - **宽度调节** —— 正文两侧的拖拽把手（官方 WidthHandle 复刻），实时拖动阅读列宽并持久化
 - **快捷键 F** —— 任意界面按 `F` 一键进入专注模式，可在设置中关闭；输入框内打字不会误触发
-- **桌面版窗口适配** —— 适配 dsh 桌面版（macOS / Windows）：顶部按官方窗口框架变量为 macOS 红绿灯与 Windows 原生标题栏让出空间，专注时这段顶部空白条可直接拖动窗口，进入全屏后自动收起预留空间
+- **桌面版窗口适配** —— 适配 dsh 桌面版（macOS / Windows）：专注标题栏直接并进官方窗口留白（macOS 红绿灯 48px / Windows 原生标题栏 40px），标题与「退出专注」就在这一行里，整条标题栏可拖动窗口，不再额外占一行空白；原生全屏时收紧为 40px 紧凑标题行
 - **专注计数** —— 设置卡片最底部累计展示你进入专注模式的次数；超过 100 次后出现 GitHub Star 引导，点过一次即被记住，之后提供「前往 GitHub 项目页面」直达按钮
 
 这些功能专为**小屏幕**提供更多内容呈现空间：收起常驻的标题 / 输入区与工具步骤，让有限的屏幕尽可能多地展示对话。
@@ -56,7 +56,7 @@
 | --- | --- |
 | 全屏专注遮罩 | 经 `shell.overlay` 注册（纯增量、`replaceRisk: none`），覆盖标题区 / 输入区 / 侧栏；顶部只留会话标题与「退出专注」按钮 |
 | 官方渲染原语 | AI 文本走官方 `MarkdownText`（GFM + 代码高亮 + TeX + 代码复制按钮 + 脚注）；用户消息按运行版本选择官方用户文本投影：dsh 0.1.2–0.2.0 用 `projectUserText`（纯文本 + `@`/`/` 引用 chip），dsh 0.2.2 桌面版移除了该函数后自动回退到官方 `UserTextRun`（纯文本 run），不会因 `undefined` 组件崩溃；按钮、模态、图标均为官方原语 |
-| 桌面版窗口框架 | 按官方 `--dsh-frame-overlay-top` / `--dsh-frame-top-clearance` / `--dsh-frame-chrome-top` 变量为 macOS 红绿灯（≈48px）与 Windows 原生标题栏（40px）预留顶部空间，并提供一个与官方拖拽区一致的顶部拖拽条（`data-window-drag` + `-webkit-app-region: drag`），专注时可拖动窗口；原生全屏（`data-fullscreen`）时预留自动降为 20px；Windows 上还会隐藏被官方提升到标题栏层的「侧边栏开关」与「新建会话」按钮（侧栏折叠 / 窄窗口时出现），避免它们浮在专注层之上、误触后在你阅读时切换会话；退出专注后随窗口 chrome 一起恢复。普通浏览器中这些变量与标记不存在，回退 0px、与旧版逐像素一致 |
+| 桌面版窗口框架 | 专注标题栏与官方窗口留白合并为一条：只预留官方 `--dsh-frame-top-clearance`（macOS 红绿灯 48px / Windows 原生标题栏 40px），标题与「退出专注」就在这条标题栏内，正文紧接着从留白下沿开始，不再叠加原来那行 48px 标题栏、也不再占用官方弹窗额外的 20px 间距；标题行是叠加层里最后生效的拖拽矩形（macOS 由合并后的标题行自身声明；Windows 由 overlay 最后一个子节点 `.fm-frame-strip` 声明，均为 `data-window-drag` + `-webkit-app-region: drag`），保证滚动内容 / 右侧导航等 `no-drag` 矩形不会覆盖它，「退出专注」按钮显式排除拖拽、保持可点；标题在 macOS 从 x=88px 起避开红绿灯、在 Windows 避开右上角原生按钮；原生全屏（`data-fullscreen`）时只保留 40px 紧凑标题行；Windows 上还会隐藏被官方提升到标题栏层的「侧边栏开关」与「新建会话」按钮（侧栏折叠 / 窄窗口时出现），避免它们浮在专注层之上、误触后在你阅读时切换会话；退出专注后随窗口 chrome 一起恢复。普通浏览器中这些变量与标记不存在，回退 0px、与旧版逐像素一致 |
 | 文件引用 chip | AI 回复中的行内代码路径由官方 `chatFileMentions` 解析为可点击 chip：dsh 0.2.x 传入官方同款的真实 Turn face（`deliverables` 投影），点击经右侧栏资源控制器以 `dsh-resource://file/session/…` 打开；dsh ≤ 0.1.x 继续使用旧的 owner 形状与 `workspaces.openPath`；无投影数据时不显示 chip，绝不因解析异常崩溃 |
 | 图片解析 | assistant 的 `image` 块经 `uiConversation.imageUrl`（dsh 0.1.2+ 的会话授权图片缓存）解析，旧版 dsh 自动回退到 legacy 解析器 |
 | 工具调用折叠 | 遵循官方「对话显示」偏好（normal / compact）；compact 模式把每轮的工作部分折叠成「N 次工具调用 · M 条消息 · K 个 subagent」披露行（无内容时显示「已思考」），点击可展开完整明细；steering 消息始终独立成行不被折叠；流式中的最后一轮保持展开直到结束 |
@@ -126,7 +126,7 @@ dsh web
 
 dsh 桌面版自带插件管理，不需要 CLI：侧栏 **Plugins → 添加插件**，填入 `dsh-focus-overlay`（或本机目录 / `link:` 路径，例如 `link:/path/to/dsh-focus-overlay`），安装后在本插件详情页中配置。安装或更新后重新加载桌面窗口（或重启桌面应用）生效。
 
-桌面版适配基于 **dsh 桌面版 0.2.2-rc.1** 验证：macOS 与 Windows 共用同一套 Electron 渲染层与客户端契约，窗口框架差异（macOS 红绿灯 / Windows 原生标题栏）由官方 `data-platform` / `data-windows-titlebar` / `data-fullscreen` 标记驱动，插件按官方窗口框架变量自适应，无需按平台分别安装。专注模式下顶部为可拖动窗口的标题空白条；按原生全屏切换后（macOS 绿灯 / Windows 最大化按钮）自动收起预留空间。
+桌面版适配基于 **dsh 桌面版 0.2.2-rc.1** 验证：macOS 与 Windows 共用同一套 Electron 渲染层与客户端契约，窗口框架差异（macOS 红绿灯 / Windows 原生标题栏）由官方 `data-platform` / `data-windows-titlebar` / `data-fullscreen` 标记驱动，插件按官方窗口框架变量自适应，无需按平台分别安装。专注模式下顶部只有一条与窗口控制键同行的可拖动标题栏（不再有额外的空白条）；按原生全屏切换后（macOS 绿灯 / Windows 最大化按钮）收紧为 40px 紧凑标题行。
 
 > 桌面版使用独立的 `desktop` profile：如果只在 Web CLI 的 `web` profile 里装过本插件，桌面版仍需在 Plugins 页面安装一次。
 

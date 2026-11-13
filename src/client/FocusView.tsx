@@ -1070,10 +1070,6 @@ function FocusContent(props: any) {
 
   return (
     <div className="fm-overlay" ref={overlayRef} tabIndex={-1}>
-      <div className="fm-topbar">
-        <div className="fm-title">{title}</div>
-        <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
-      </div>
       <div className="fm-body-wrap">
         <div className="fm-body" ref={(el) => { bodyEl = el }} onScroll={scheduleRecompute}>{body}</div>
         {currentId && snap !== null ? (
@@ -1110,30 +1106,36 @@ function FocusContent(props: any) {
         </div>
       ) : null}
       {replyNotice}
-      {/* Desktop window-frame drag strip — MUST stay the overlay's LAST child.
-          The dsh desktop shells (macOS and Windows, 0.2.2-rc.1) hide the native
-          titlebar and render that area as ordinary web content, so the overlay
-          reserves it via `--dsh-frame-overlay-top` (68px macOS = 48px
-          traffic-light clearance + 20px, 60px Windows = 40px titlebar + 20px,
-          20px fullscreen, undefined → 0px on the plain web) and owns the drag
-          surface itself: the official `[data-window-drag]{app-region:drag}`
-          rule plus the same declaration in the package stylesheet (Windows
-          renderer). No focusable content, no `tabindex` (darwin's official
-          `[tabindex]{app-region:no-drag}` rule would silently kill the band),
-          aria-hidden — it paints nothing.
-          WHY LAST: Electron hit-tests the window against the renderer's
-          app-region rects in layout-tree order and the LATER rect wins where
-          they overlap (electron `shell/browser/ui/drag_util.cc`; renderer order
-          = Blink `LocalFrameView::CollectDraggableRegions` pre-order ≈ DOM
-          order). `-webkit-app-region` is inherited and `.fm-overlay` itself is
+      {/* Focus titlebar row. Plain web: an ordinary flow row above the body
+          (order:-1 keeps it visually first). macOS desktop: merged INTO the
+          reserved traffic-light band — absolutely positioned over the overlay
+          padding-top area, as tall as the band, and IS the window drag surface
+          there (data-window-drag + drag region, exit control no-drag). Windows
+          desktop: the caption band above belongs to the native caption buttons
+          and the web caption menubar (which paints above this overlay), so the
+          row is an ordinary row below that band and the separate
+          `.fm-frame-strip` (last child) owns the band drag instead.
+          WHY THE STRIP IS LAST: Electron hit-tests a frameless window against
+          the renderer's app-region rects in layout-tree order, and the LATER
+          rect wins where they overlap (electron
+          `shell/browser/ui/drag_util.cc`; renderer order = Blink
+          `LocalFrameView::CollectDraggableRegions` pre-order ≈ DOM order).
+          `-webkit-app-region` is inherited and `.fm-overlay` itself is
           `tabIndex={-1}`, which the official darwin CSS marks `no-drag` — so
-          EVERY overlay descendant is a no-drag rect, and layout rects are not
-          clipped by ancestor overflow. On a session with content, the scrolled
-          message flow keeps negative-y rects (`.fm-inner` etc.) and the turn
-          rail's full-viewport `.fm-rail-slot` both overlap the reserved band;
-          while this strip was the FIRST child those later rects overrode it and
-          the window could only be dragged on a blank session. Rendered last,
-          its drag rect is the final word for the band. */}
+          every overlay descendant is a no-drag rect by default, and layout
+          rects are not clipped by ancestor overflow. On a session with content
+          the scrolled flow keeps negative-y rects (`.fm-inner`, `.fm-msg`, ...)
+          and the turn rail's full-viewport `.fm-rail-slot` both overlap the
+          band; they must come BEFORE the drag claim. On macOS the merged row is
+          the last *rendered* claim (the strip is display:none there, so it
+          contributes no rect); on Windows the strip comes last, after the row.
+          Keep that ordering: a new overlay child that paints over the band
+          must be rendered before the claim, and interactive controls inside a
+          drag surface must be explicitly `no-drag` in the stylesheet. */}
+      <div className="fm-topbar" data-window-drag>
+        <div className="fm-title">{title}</div>
+        <Button variant="outline" size="sm" onClick={() => focusStore.set(false)}>{t('exit')}</Button>
+      </div>
       <div className="fm-frame-strip" data-window-drag aria-hidden="true" />
     </div>
   )

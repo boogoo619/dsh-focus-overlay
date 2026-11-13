@@ -1,5 +1,105 @@
 # Handoff — dsh-focus-overlay (focus-mode bundle plugin)
 
+## Tuning — focus title row merged into the macOS window chrome band (2026-11-13)
+
+**Symptom (user report, macOS desktop app):** after entering focus mode the top
+of the window used too much vertical space; the empty strip above the session
+title made screen usage poor.
+
+**What the top actually was (measured, real 1280×820 Electron window):** TWO
+stacked reservations. `.fm-overlay{padding-top:var(--dsh-frame-overlay-top)}` =
+68px on darwin, then a 49px `.fm-topbar` row below it, then 28px body padding →
+the transcript started at ~145px and the title glyph sat at y≈81 from the window
+top. The 68px comes from the official `--dsh-frame-overlay-top` = clearance +
+20px: the +20px is a gap for *dialogs and menus*; a full-window reading surface
+must not pay it, and it was pure empty space above the focus titlebar. Windows
+had the same shape (60px band + 49px row, body at 109px).
+
+**Fix — merge the title row into the band (macOS) / keep Windows caption chrome.**
+
+- The overlay now reserves exactly `--dsh-frame-top-clearance` (48px macOS
+  traffic lights, 40px Windows caption; compact 40px in macOS native
+  fullscreen) via `--fm-frame-band` + `padding-top` — never
+  `--dsh-frame-overlay-top` (no +20px dialog gap). Plain web: 0px as before.
+- **macOS:** `.fm-topbar` is merged INTO the band — `position:absolute;
+  top:0; h=band`, title left `88px` (traffic lights end at x≈76.7; the official
+  leading seat uses left:88), exit control at the right. The row is the window
+  drag surface itself (`data-window-drag` + a drag app-region declaration) and
+  its exit `<button>` is explicitly `no-drag`. Transcript starts at y=48.
+- **Windows:** the band is NOT merged into. The preload-injected web caption
+  menubar (`[data-windows-menu]`, shadow DOM, `z-index:1100`, `.fm-topbar`-width
+  at top-left) paints ABOVE this overlay (the overlay lives inside the official
+  `z-index:20` shell.overlay stacking context) and must stay visible — it is the
+  only app menu (audit W5). A merged title would sit behind it. So Windows keeps
+  the 40px caption band as chrome and puts the title row (`40px`, static)
+  directly below it; the separate `.fm-frame-strip` (last child, drag) owns the
+  band drag. Body starts at 80px (was 109px in 0.13.x).
+- Net space reclaimed: **macOS transcript starts ~69px higher** (body top
+  117→48, first content 145→76) and the title now shares the traffic-light line
+  (y≈81→~14); Windows body top 109→80. macOS native fullscreen 68→40 (Windows
+  fullscreen is effectively unreachable in the app).
+
+**Drag ordering contract (load-bearing, updated):** Electron keeps the
+renderer's app-region rects in layout-tree order and the later rect wins
+(`drag_util.cc`; Blink `CollectDraggableRegions` pre-order ≈ DOM order). Every
+overlay descendant is `no-drag` by default (overlay root `tabIndex={-1}` +
+official darwin `[tabindex]`/`button` rules), and scrolled content keeps
+unclipped negative-y rects while `.fm-rail-slot` is a full-viewport no-drag
+rect, so the drag claim must be the LAST rendered claim over the band. That is
+now: macOS → the merged `.fm-topbar` (the `.fm-frame-strip` exists but is
+`display:none`, contributing no rect); Windows → `.fm-frame-strip`, the
+overlay's last child (the title row below the band does not overlap it). Only
+the row's own exit button may be a no-drag rect after the claim; the stylesheet
+excludes it explicitly.
+
+**Verification:**
+- Unit suite 129/129.
+- Playwright `tests/e2e/desktop-frame.mjs` (6 modes + collapsed-sidebar
+  scenarios): **131 checks, 0 failed** — plain web unchanged (topbar in flow at
+  y=0, no band, no drag surface); darwin band 48 with the row merged (top 0,
+  h=48, title left 88, exit no-drag, body top 48); darwin fullscreen band 40
+  (title left 16); win32 band 40 + row below at y=40 h=40 body top 80, strip
+  over the band; fullscreen and 520×600 collapsed runs green.
+- Playwright `tests/e2e/drag-band.mjs`: **44 checks, 0 failed** — darwin
+  12/12 non-control band points resolve `drag .fm-topbar` (the exit-button
+  centre resolves `no-drag`), 79 no-drag rects before the claim / 0 after
+  (18 negative-y scrolled rects, rail culprit present), synthetic ordering
+  control flips and restores the band, real click on the exit control closes
+  the overlay; win32 12/12 points resolve `drag .fm-frame-strip`, non-vacuous
+  ordering, row-not-drag, strip last child.
+- **Real Electron window** (independent verifier; isolated second instance of
+  the packaged app with the real preload, CDP, fresh app restart so the new
+  client bundle was served): before/after contract 35/35, AFTER probe 55/55
+  PASS, 0 FAIL (1 skip: native fullscreen toggle can't be driven over CDP).
+  Windowed darwin 1280×820 dpr2, content session (2 bubbles + rail):
+  padding-top 48, `--fm-frame-band` 48, `.fm-topbar` {0,0,1280,48} absolute
+  app-region drag, title x=88 y=13.5 (traffic lights x16..76.7 y18..32 — same
+  line, 11.3px clear), exit {x≈1162,y=9.5,w≈101.7,h=28} right edge vw−16,
+  no-drag; `.fm-frame-strip` is the last child but `display:none`, rect 0×0,
+  no region contributed; body top 48, first content 76 (was 117/145). 12/12
+  in-band probes y=10/24/40 → `drag .fm-topbar`; exit centre → `no-drag`; after
+  scrolling to the bottom (`.fm-inner` y=−1632, `.fm-rail-slot` full-viewport
+  no-drag) still 12/12 drag with no later no-drag band cover; exit click,
+  hotkey F re-open, Esc all OK; no pageerror / plugin console errors (only the
+  two pre-existing `/api/changes.summary` 404s). Fullscreen via CSS marker:
+  band 40, title x=16, body 40, first content 68, 12/12 probes drag. Baseline
+  (frozen pre-rebuild lib): padding 68, row {0,68,1280,49}, title x=16, strip
+  0,0 1280×68 drag last child, body top 117, first content 145. → **content 69px
+  higher**, title now on the traffic-light line. Evidence:
+  `tests/e2e/out/verify/top-chrome-{baseline,after,diff}.json`,
+  `top-chrome-report.md`, `after-focus-*.png`, `top-chrome-before-after.png`.
+- e2e helpers updated: `readOverlayState` reports the merged row, the
+  platform drag surface and the Windows strip; `probeDragRegions` picks the
+  last rendered *drag claim* as the surface and treats the surface's own
+  control no-drag rect as expected (`surfaceControlNoDrag`) while
+  `noDragAfterSurface` is an ordering violation; the band probe grid is
+  geometry-aware (heights inside the band, x clear of the exit button).
+
+**Rollout:** the desktop app caches the plugin client bundle at server start,
+so restart DeepSeek Harness to pick this up (page reload is not enough).
+Released as **v0.13.1** together with the drag-band fix below (tag → CI
+Trusted Publisher publishes to npm); `lib/` rebuilt from `src/`.
+
 ## Fix — window drag band dead on sessions WITH content (2026-11-13)
 
 **Symptom (user report, macOS desktop app):** after entering focus mode the
@@ -86,8 +186,8 @@ nothing, and collapses to 0px on the plain web.
 
 **Rollout:** the desktop app caches the plugin client bundle at server start, so
 the fix reaches the live app only after restarting DeepSeek Harness (a page
-reload is not enough). Changes are uncommitted/unreleased (no version bump);
-`lib/` rebuilt from `src/`.
+reload is not enough). Released in **v0.13.1** together with the focus top-band
+merge above; `lib/` rebuilt from `src/`.
 
 ## dsh desktop 0.2.2-rc.1 adaptation (2026-11-10)
 
