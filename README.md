@@ -58,7 +58,7 @@
 | 官方渲染原语 | AI 文本走官方 `MarkdownText`（GFM + 代码高亮 + TeX + 代码复制按钮 + 脚注）；用户消息按运行版本选择官方用户文本投影：dsh 0.1.2–0.2.0 用 `projectUserText`（纯文本 + `@`/`/` 引用 chip），dsh 0.2.2 桌面版移除了该函数后自动回退到官方 `UserTextRun`（纯文本 run），不会因 `undefined` 组件崩溃；按钮、模态、图标均为官方原语 |
 | 桌面版窗口框架 | 专注标题栏与官方窗口留白合并为一条：只预留官方 `--dsh-frame-top-clearance`（macOS 红绿灯 48px / Windows 原生标题栏 40px），标题与「退出专注」就在这条标题栏内，正文紧接着从留白下沿开始，不再叠加原来那行 48px 标题栏、也不再占用官方弹窗额外的 20px 间距；标题行是叠加层里最后生效的拖拽矩形（macOS 由合并后的标题行自身声明；Windows 由 overlay 最后一个子节点 `.fm-frame-strip` 声明，均为 `data-window-drag` + `-webkit-app-region: drag`），保证滚动内容 / 右侧导航等 `no-drag` 矩形不会覆盖它，「退出专注」按钮显式排除拖拽、保持可点；标题在 macOS 从 x=88px 起避开红绿灯、在 Windows 避开右上角原生按钮；原生全屏（`data-fullscreen`）时只保留 40px 紧凑标题行；Windows 上还会隐藏被官方提升到标题栏层的「侧边栏开关」与「新建会话」按钮（侧栏折叠 / 窄窗口时出现），避免它们浮在专注层之上、误触后在你阅读时切换会话；退出专注后随窗口 chrome 一起恢复。普通浏览器中这些变量与标记不存在，回退 0px、与旧版逐像素一致 |
 | 文件引用 chip | AI 回复中的行内代码路径由官方 `chatFileMentions` 解析为可点击 chip：dsh 0.2.x 传入官方同款的真实 Turn face（`deliverables` 投影），点击经右侧栏资源控制器以 `dsh-resource://file/session/…` 打开；dsh ≤ 0.1.x 继续使用旧的 owner 形状与 `workspaces.openPath`；无投影数据时不显示 chip，绝不因解析异常崩溃 |
-| 图片解析 | assistant 的 `image` 块经 `uiConversation.imageUrl`（dsh 0.1.2+ 的会话授权图片缓存）解析，旧版 dsh 自动回退到 legacy 解析器 |
+| 图片解析 | assistant 的 `image` 块经 `uiConversation.imageUrl`（dsh 0.1.2+ 的会话授权图片缓存）解析，旧版 dsh 自动回退到 legacy 解析器；AI 回复里用 Markdown 写的本地图片（相对 / 绝对路径，如 `![对比](<tests/e2e/out/verify/x.png>)`）按官方 `fileImages` 的同一套规则以会话 `cwd` 解析为鉴权文件 URL，不再只显示 alt 文本；用户消息附带的图片同样渲染在气泡上方 |
 | 工具调用折叠 | 遵循官方「对话显示」偏好（normal / compact）；compact 模式把每轮的工作部分折叠成「N 次工具调用 · M 条消息 · K 个 subagent」披露行（无内容时显示「已思考」），点击可展开完整明细；steering 消息始终独立成行不被折叠；流式中的最后一轮保持展开直到结束 |
 | 分类摘要明细 | 展开后按工具类别计数：命令 / 编辑 / 搜索 / 读取 / 列目录 / 子代理 / 待办 / 目标 / 工作流 / 技能 / 提问 / 计划 / 后台任务 / 上下文注入 |
 | 完整历史加载 | dsh 0.1.2 按回合分页，打开专注时自动驱动 `loadOlder` 翻页到会话开头（有上限、卸载即中止），保证全量阅读视图 |

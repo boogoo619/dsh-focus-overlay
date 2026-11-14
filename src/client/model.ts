@@ -197,6 +197,84 @@ export function flattenText(content: any): string {
   return out
 }
 
+/** Durable image references carried by a user/steering content array.
+ *
+ *  User messages keep the official `ContentBlock` shape (`type: 'image'` +
+ *  `attachment`), not the assistant view's `kind: 'image'` block shape.
+ *  Malformed entries (an image block without an attachment) are skipped: the
+ *  resolver needs the durable reference and a partial block has nothing to
+ *  render. */
+export function imagesOfContent(content: any): any[] {
+  if (!content || !content.length) return []
+  const out: any[] = []
+  for (const b of content) {
+    if (b && b.type === 'image' && b.attachment) out.push(b.attachment)
+  }
+  return out
+}
+
+// ---- local Markdown images ----
+
+/** Whether a path is absolute in either spelling the Host accepts: POSIX
+ *  (`/a/b`) or a Windows drive (`C:/a/b`) / UNC (`\\\\server\\share`). Mirrors
+ *  the official `dsh-util-workspace-path` predicate — feature bundles must not
+ *  import another package's values across the client boundary, so the small
+ *  grammar is inlined here the same way `sessionFileAddressOf` inlines the
+ *  resource-address grammar. */
+export function isAbsoluteWorkspacePath(path: string): boolean {
+  return path.startsWith('/') || /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\')
+}
+
+/** Resolve a workspace-relative path against the session cwd, mirroring the
+ *  official `resolveWorkspacePath`: absolute input passes through, a relative
+ *  input joins with the cwd using that cwd's separator, and a missing cwd
+ *  leaves the relative path as-is. */
+export function resolveWorkspacePath(cwd: string | undefined, path: string): string {
+  if (isAbsoluteWorkspacePath(path)) return path
+  if (cwd === undefined || cwd === '') return path
+  const separator = /^[A-Za-z]:[/\\]/.test(cwd) || cwd.startsWith('\\\\')
+    ? (cwd.includes('\\') ? '\\' : '/')
+    : '/'
+  const base = cwd.replace(/[/\\]+$/, '')
+  const relative = path.replace(/^(?:\.?[/\\])+/, '')
+  return `${base}${separator}${relative}`
+}
+
+/** Turn one authored Markdown image destination into the authenticated file
+ *  URL the official chat view renders, or undefined when it is not a local
+ *  workspace image.
+ *
+ *  The official chat resolves these through its Markdown provider
+ *  (`fileImages.resolve` → `fileMediaUrl`); the focus overlay renders
+ *  `MarkdownText` outside that provider, so it supplies the equivalent via the
+ *  primitive's `pathImages.resolve` hook. Only messages that carry an
+ *  attachment block survive official rendering; this path is for the far more
+ *  common case where the AI writes `![alt](relative/or/absolute/path.png)`.
+ *
+ *  Delegating path grammar to the official implementation is not possible
+ *  across the client bundle boundary (see `isAbsoluteWorkspacePath`), so this
+ *  reproduces `fileMediaUrl`'s contract:
+ *  - `path` is URL-decoded once, with the query/fragment suffix dropped;
+ *  - a relative path is resolved against the session cwd first;
+ *  - only absolute paths (and no UNC path) can be addressed by the file route;
+ *  - the base must be http(s) or the desktop `dsh-app://app/` scheme.
+ */
+export function markdownImageHref(base: string, cwd: string | undefined, destination: string): string | undefined {
+  const raw = destination.split(/[?#]/u)[0] ?? ''
+  let path: string
+  try { path = decodeURIComponent(raw) } catch { return undefined }
+  if (path === '' || /[\u0000-\u001f\u007f]/u.test(path)) return undefined
+  // A URL scheme is not a workspace path. A Windows drive prefix is the one
+  // colon spelling that IS a path, so it is exempted.
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(path) && !/^[A-Za-z]:[/\\]/u.test(path)) return undefined
+  const absolute = resolveWorkspacePath(cwd, path)
+  if (!isAbsoluteWorkspacePath(absolute) || /^[/\\]{2}/u.test(absolute)) return undefined
+  if (!/^https?:/u.test(base) && !base.startsWith('dsh-app://app/')) return undefined
+  try {
+    return new URL(`api/file?path=${encodeURIComponent(absolute)}`, base).href
+  } catch { return undefined }
+}
+
 // ---- semantic summary: classify hidden steps by tool name ----
 const METRIC: Record<string, string> = {
   bash: 'commands', pwsh: 'commands', sh: 'commands', cmd: 'commands', terminal: 'commands', shell: 'commands',
@@ -236,8 +314,8 @@ export function summarySegments(t: FocusTranslate, metrics: Record<string, numbe
 }
 
 export type FocusItem =
-  | { kind: 'user'; text: string; seq: number }
-  | { kind: 'steering'; text: string; seq: number }
+  | { kind: 'user'; text: string; seq: number; images?: any[] }
+  | { kind: 'steering'; text: string; seq: number; images?: any[] }
   | { kind: 'assistant'; blocks: any[]; seq: number; turn: number; step: number }
   | { kind: 'error'; text: string }
   | { kind: 'hidden'; text: string }
@@ -297,7 +375,12 @@ export function buildItems(nodes: any[], runningCalls: any[], t: FocusTranslate,
       continue
     }
     const headText = flattenText(head.content)
-    if (headText.trim() !== '') items.push({ kind: 'user', text: headText, seq: head.seq })
+    const headImages = imagesOfContent(head.content)
+    if (headText.trim() !== '' || headImages.length > 0) {
+      const item: FocusItem = { kind: 'user', text: headText, seq: head.seq }
+      if (headImages.length > 0) item.images = headImages
+      items.push(item)
+    }
     const body = bucket.slice(1)
     // Find the closing assistant: last content-bearing assistant of the turn.
     let closingIdx = -1
@@ -395,12 +478,24 @@ function segmentItems(nodes: any[], runningCalls: any[], t: FocusTranslate): Foc
     switch (n.kind) {
       case 'user': {
         const text = flattenText(n.content)
-        if (text.trim() !== '') { flush(); items.push({ kind: 'user', text, seq: n.seq }) }
+        const images = imagesOfContent(n.content)
+        if (text.trim() !== '' || images.length > 0) {
+          flush()
+          const item: FocusItem = { kind: 'user', text, seq: n.seq }
+          if (images.length > 0) item.images = images
+          items.push(item)
+        }
         break
       }
       case 'steering': {
         const text = flattenText(n.content)
-        if (text.trim() !== '') { flush(); items.push({ kind: 'steering', text, seq: n.seq }) }
+        const images = imagesOfContent(n.content)
+        if (text.trim() !== '' || images.length > 0) {
+          flush()
+          const item: FocusItem = { kind: 'steering', text, seq: n.seq }
+          if (images.length > 0) item.images = images
+          items.push(item)
+        }
         break
       }
       case 'assistant':

@@ -1,5 +1,49 @@
 # Handoff — dsh-focus-overlay (focus-mode bundle plugin)
 
+## Fix — images returned by the AI render in focus mode (2026-11-14)
+
+**Symptom (user report):** after entering focus mode, an image "returned by
+the AI" was not rendered.
+
+**Root cause — the overlay rendered `MarkdownText` outside the official chat's
+`MarkdownDelegateProvider`.** In the official chat view, a locally authored
+Markdown image (`![alt](screenshots/x.png)` or an absolute path) is resolved by
+`fileImages.resolve` → `resolveWorkspacePath(cwd, path)` → `fileMediaUrl(
+document.baseURI, abs)`; the overlay never supplied that provider nor the
+`pathImages` fallback prop. The primitive's image renderer therefore fell
+through to `<span class="imageAlt">{alt}</span>` — the user saw the alt text
+(often the image caption) and no image. Reproduced live on the seeded
+"减少 Mac 专注模式顶部留白" session: the final answer's
+`![专注模式顶部 前/后对比](<tests/e2e/out/verify/top-chrome-before-after.png>)`
+rendered in the normal chat and was an alt-only span in the overlay.
+
+**Fix (all in the client half):**
+
+- `model.ts`: added `markdownImageHref(base, cwd, destination)` plus the
+  inlined `isAbsoluteWorkspacePath` / `resolveWorkspacePath` grammar (feature
+  bundles must not import `@deepseek-ai/dsh-util-workspace-path` values across
+  the client boundary). It decodes the destination once, drops `?/#` suffixes,
+  resolves a relative path against the session cwd, declines non-file schemes /
+  UNC / non-absolute results, and builds the same `/api/file?path=…` URL as the
+  official `fileMediaUrl` (including the desktop `dsh-app://app/` base and
+  deployment prefixes).
+- `FocusView.tsx`: derives `sessionCwd` from the session-list row and passes a
+  stable `pathImages={{ resolve }}` object to every `MarkdownText` in
+  `AssistantItem` (final and streaming-tail rows).
+- User messages: `imagesOfContent` extracts `type: 'image'` blocks from user /
+  steering content; `buildItems` keeps a row whose only payload is an image and
+  carries the attachments; `UserImages` renders them above the bubble with the
+  same `uiConversation.imageUrl` loader (official user-content layout,
+  right-aligned 240px thumbnails).
+- `styles.ts`: `.fm-user-stack` / `.fm-user-attachments` / `.fm-image-user`
+  for that layout; assistant Markdown images keep the primitive's own classes.
+
+**Verification:** unit suite 141/141; live GUI (desktop 0.2.2-rc.3, session
+`ead622a0`): focus overlay now renders both the user-attached screenshot
+(blob URL, 242×169) and the assistant's local Markdown comparison image
+(`/api/file?…&load=8`, 760×172), with zero `imageAlt` fallbacks. `npm run
+build` rebuilt `lib/client.js`.
+
 ## Tuning — focus title row merged into the macOS window chrome band (2026-11-13)
 
 **Symptom (user report, macOS desktop app):** after entering focus mode the top

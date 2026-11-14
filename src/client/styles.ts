@@ -86,9 +86,16 @@ html[data-windows-titlebar] .fm-frame-strip{display:block;position:absolute;top:
 .fm-inner>*{margin:var(--dsh-chat-flow-gap,16px) 0 0}
 .fm-inner>*:first-child{margin-top:0}
 .fm-user{background:var(--dsw-specific-bubble,#eaf2ff);color:var(--dsw-alias-label-primary,#1a1a1a);font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px));white-space:pre-wrap;word-break:break-word;border-radius:22px;padding:10px 16px;max-width:min(calc(var(--fm-content-width,748px) * .702),82%);margin-left:auto}
+/* User prompt stack: attached images sit above the bubble and right-align with
+   it, matching the official user-content layout (attachments row above the
+   text bubble). */
+.fm-user-stack{display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:100%}
+.fm-user-stack .fm-user{margin-left:0}
+.fm-user-attachments{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;max-width:min(calc(var(--fm-content-width,748px) * .702),82%)}
 .fm-steering{opacity:.85}
 .fm-assistant{word-break:break-word;font:var(--dsw-font-markdown-base,400 var(--dsh-content-font-size,14px)/calc(24px + var(--dsh-content-font-delta,0px)) var(--dsw-font-family,sans-serif))}
 .fm-image{max-width:100%;border-radius:8px;margin:8px 0}
+.fm-image-user{max-width:240px;max-height:240px;width:auto;height:auto;object-fit:cover;border-radius:12px;margin:0;border:.5px solid var(--dsw-alias-border-l2,rgba(0,0,0,.08))}
 /* Classic process fold (normal mode, and the expanded work-part rows in
    compact): centered, muted, secondary typography. */
 .fm-hidden{text-align:center;color:var(--dsw-alias-label-secondary,#888);font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(24px + var(--dsh-content-font-delta,0px));padding:2px 0;user-select:none}

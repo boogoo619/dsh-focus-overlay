@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   flattenText,
+  imagesOfContent,
+  resolveWorkspacePath,
+  markdownImageHref,
   hasAssistantContent,
   addMetric,
   summarySegments,
@@ -49,6 +52,68 @@ describe('flattenText', () => {
   it('returns empty string for missing/empty content', () => {
     expect(flattenText([])).toBe('')
     expect(flattenText(undefined)).toBe('')
+  })
+})
+
+describe('imagesOfContent', () => {
+  it('collects durable references from user content and skips text/malformed image blocks', () => {
+    const a = { attachmentId: 'sha256:a', mediaType: 'image/png' }
+    const b = { attachmentId: 'sha256:b', mediaType: 'image/webp' }
+    expect(imagesOfContent([
+      { type: 'text', text: '看图' },
+      { type: 'image', attachment: a },
+      { type: 'image' },
+      null,
+      { type: 'image', attachment: b },
+    ])).toEqual([a, b])
+  })
+  it('returns an empty array for missing/empty content', () => {
+    expect(imagesOfContent([])).toEqual([])
+    expect(imagesOfContent(undefined)).toEqual([])
+  })
+})
+
+describe('resolveWorkspacePath', () => {
+  it('passes absolute POSIX / drive / UNC paths through', () => {
+    expect(resolveWorkspacePath('/w', '/tmp/a.png')).toBe('/tmp/a.png')
+    expect(resolveWorkspacePath('C:\\w', 'D:/a.png')).toBe('D:/a.png')
+    expect(resolveWorkspacePath('/w', '\\\\server\\share\\a.png')).toBe('\\\\server\\share\\a.png')
+  })
+  it('joins a relative path onto the cwd and drops ./ prefixes', () => {
+    expect(resolveWorkspacePath('/Users/me/proj', 'tests/out/a.png')).toBe('/Users/me/proj/tests/out/a.png')
+    expect(resolveWorkspacePath('/Users/me/proj/', './shots/a.png')).toBe('/Users/me/proj/shots/a.png')
+    expect(resolveWorkspacePath('C:\\proj', 'shots\\a.png')).toBe('C:\\proj\\shots\\a.png')
+  })
+  it('leaves a relative path alone without a cwd', () => {
+    expect(resolveWorkspacePath(undefined, 'shots/a.png')).toBe('shots/a.png')
+    expect(resolveWorkspacePath('', 'shots/a.png')).toBe('shots/a.png')
+  })
+})
+
+describe('markdownImageHref', () => {
+  it('resolves a workspace-relative image against the session cwd', () => {
+    expect(markdownImageHref('http://127.0.0.1:56040/', '/Users/me/proj', 'tests/out/before-after.png'))
+      .toBe('http://127.0.0.1:56040/api/file?path=%2FUsers%2Fme%2Fproj%2Ftests%2Fout%2Fbefore-after.png')
+  })
+  it('decodes URL escapes once and drops query/fragment suffixes', () => {
+    expect(markdownImageHref('http://host/', '/w', 'shots/a%20b.png?x=1#frag'))
+      .toBe('http://host/api/file?path=%2Fw%2Fshots%2Fa%20b.png')
+  })
+  it('keeps an absolute image path and preserves the deployment prefix', () => {
+    expect(markdownImageHref('https://host/app/', '/w', '/tmp/a.png'))
+      .toBe('https://host/app/api/file?path=%2Ftmp%2Fa.png')
+  })
+  it('supports the desktop dsh-app base', () => {
+    expect(markdownImageHref('dsh-app://app/', '/w', 'a.png'))
+      .toBe('dsh-app://app/api/file?path=%2Fw%2Fa.png')
+  })
+  it('declines non-file destinations and unresolvable paths', () => {
+    expect(markdownImageHref('http://host/', '/w', 'https://cdn.example/a.png')).toBeUndefined()
+    expect(markdownImageHref('http://host/', '/w', 'data:image/png;base64,AAAA')).toBeUndefined()
+    expect(markdownImageHref('http://host/', undefined, 'a.png')).toBeUndefined()
+    expect(markdownImageHref('http://host/', '/w', '//server/share/a.png')).toBeUndefined()
+    expect(markdownImageHref('http://host/', '/w', 'bad%escape')).toBeUndefined()
+    expect(markdownImageHref('file:///tmp/a.png', '/w', '/tmp/a.png')).toBeUndefined()
   })
 })
 
@@ -138,6 +203,28 @@ describe('buildItems', () => {
       { kind: 'assistant', seq: 2, turn: 1, step: 1, blocks: [{ kind: 'reasoning', text: 'think' }] },
     ]
     expect(buildItems(ns, [], t)).toEqual([])
+  })
+
+  it('keeps user rows that carry an attached image, even with no text', () => {
+    const ref = { attachmentId: 'sha256:x', mediaType: 'image/png' }
+    const ns = [
+      { kind: 'user', seq: 1, content: [{ type: 'image', attachment: ref }] },
+      { kind: 'assistant', seq: 2, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'seen' }] },
+    ]
+    const normal = buildItems(ns, [], t, 'normal')
+    expect(normal[0]).toMatchObject({ kind: 'user', text: '', seq: 1, images: [ref] })
+    const compact = buildItems(ns, [], t, 'compact')
+    expect(compact[0]).toMatchObject({ kind: 'user', text: '', seq: 1, images: [ref] })
+    expect((compact[0] as { images: any[] }).images).toEqual([ref])
+  })
+
+  it('keeps an attached image alongside the prompt text', () => {
+    const ref = { attachmentId: 'sha256:y', mediaType: 'image/webp' }
+    const ns = [
+      { kind: 'user', seq: 1, content: [{ type: 'image', attachment: ref }, { type: 'text', text: '看这张图' }] },
+      { kind: 'assistant', seq: 2, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'ok' }] },
+    ]
+    expect(buildItems(ns, [], t, 'compact')[0]).toMatchObject({ kind: 'user', text: '看这张图', seq: 1, images: [ref] })
   })
 
   it('emits an error item for turn-error', () => {

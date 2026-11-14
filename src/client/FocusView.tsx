@@ -5,7 +5,7 @@ import { IconChevronDown } from './icons'
 import { usePrefs, prefsStore, onboardingStore, statsStore, useEntryCount, useStarred } from './settings'
 import type { FocusTranslate } from './locales'
 import { markdownLabels } from './locales'
-import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, pendingInteractionFromStatus, currentSessionIdOf, transcriptViewOf, sessionFileAddressOf, fileMentionOwnerOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar } from './model'
+import { buildItems, resolveAnchorSeq, findSeqIndex, lastUserIndex, lastPromptSeq, shouldRevealSentPrompt, REVEAL_RESERVE_PX, bottomForm, bottomZoneAfter, activeNavIndex, legacySliceOf, pendingInteractionOf, pendingInteractionFromStatus, currentSessionIdOf, transcriptViewOf, sessionFileAddressOf, fileMentionOwnerOf, legacyPendingOf, processLabel, decideOpenScroll, shouldLiftOfficialComposer, LIFT_MAX_WIDTH, shouldShowStar, markdownImageHref } from './model'
 import { FocusBottomDock, useInputFace, useInputState } from './Composer'
 import { celebrateThenOpen } from './celebrate'
 import { TurnRail, type RailItem } from './TurnRail'
@@ -200,7 +200,7 @@ function useTranscriptViewMode(settingsScope: any, configForms: any): 'normal' |
   return mode
 }
 
-function SessionImage({ attachment, loadImage }: { attachment: any; loadImage: (a: any) => Promise<string> }) {
+function SessionImage({ attachment, loadImage, className = 'fm-image' }: { attachment: any; loadImage: (a: any) => Promise<string>; className?: string }) {
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
@@ -208,20 +208,32 @@ function SessionImage({ attachment, loadImage }: { attachment: any; loadImage: (
     return () => { alive = false }
   }, [attachment, loadImage])
   if (!src) return null
-  return <img className="fm-image" src={src} alt="" />
+  return <img className={className} src={src} alt="" />
+}
+
+/** User-attached images, right-aligned above the prompt bubble — the official
+ *  user-content layout (attachments row above the text bubble). They render
+ *  through the same session-authorized loader as assistant image blocks. */
+function UserImages({ images, loadImage }: { images: any[]; loadImage: (a: any) => Promise<string> }) {
+  if (!images || images.length === 0) return null
+  return (
+    <div className="fm-user-attachments">
+      {images.map((a, i) => <SessionImage key={i} attachment={a} loadImage={loadImage} className="fm-image fm-image-user" />)}
+    </div>
+  )
 }
 
 /** Re-exported from ./locales (moved there so the Composer's answer card can
  *  share it without FocusView ↔ Composer importing each other). */
 export { markdownLabels }
 
-function AssistantItem(props: { blocks: any[]; loadImage: (a: any) => Promise<string>; fileMentions: any; labels: any }) {
-  const { blocks, loadImage, fileMentions, labels } = props
+function AssistantItem(props: { blocks: any[]; loadImage: (a: any) => Promise<string>; fileMentions: any; labels: any; pathImages: any }) {
+  const { blocks, loadImage, fileMentions, labels, pathImages } = props
   const text = (blocks || []).filter((b) => b && b.kind === 'text').map((b) => b.text).join('')
   const images = (blocks || []).filter((b) => b && b.kind === 'image')
   return (
     <div className="fm-msg fm-assistant">
-      {text ? <MarkdownText text={text} labels={labels} fileMentions={fileMentions} /> : null}
+      {text ? <MarkdownText text={text} labels={labels} fileMentions={fileMentions} pathImages={pathImages} /> : null}
       {images.map((b, i) => <SessionImage key={i} attachment={b.attachment} loadImage={loadImage} />)}
     </div>
   )
@@ -249,6 +261,16 @@ function FocusContent(props: any) {
   const listState = useSessions((s: any) => s)
   const currentId = useCurrentSessionId(sessions, uiSession, listState)
   const snap = useSessionSnapshot(sessions, currentId)
+  // Session workspace root: the official Markdown renderer resolves authored
+  // relative image paths against it (`fileImages.resolve` in the chat view).
+  // The overlay renders MarkdownText outside that provider, so it hands the
+  // same resolution to the primitive through `pathImages`.
+  const sessionCwd: string | undefined = currentId != null && listState && listState.byId
+    ? listState.byId[currentId]?.cwd
+    : undefined
+  const pathImages = useMemo(() => ({
+    resolve: (value: string) => markdownImageHref(document.baseURI, sessionCwd, value),
+  }), [sessionCwd])
   // dsh 0.1.2: conversation content lives in the chat view's legacy slice;
   // the session snapshot itself keeps only lifecycle/control state.
   const chatView = useChatView(uiConversation, currentId)
@@ -940,19 +962,25 @@ function FocusContent(props: any) {
       if (it.kind === 'user') {
         return (
           <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (registerAnchor) { if (el) anchors[key] = el; else delete anchors[key] } }}>
-            <div className="fm-user"><UserText text={it.text} /></div>
+            <div className="fm-user-stack">
+              <UserImages images={it.images} loadImage={loadImage} />
+              {it.text ? <div className="fm-user"><UserText text={it.text} /></div> : null}
+            </div>
           </div>
         )
       }
       if (it.kind === 'steering') {
         return (
           <div key={key} className="fm-msg fm-user-msg" ref={(el) => { if (registerAnchor) { if (el) anchors[key] = el; else delete anchors[key] } }}>
-            <div className="fm-user fm-steering"><UserText text={it.text} /></div>
+            <div className="fm-user-stack">
+              <UserImages images={it.images} loadImage={loadImage} />
+              {it.text ? <div className="fm-user fm-steering"><UserText text={it.text} /></div> : null}
+            </div>
           </div>
         )
       }
       if (it.kind === 'assistant') {
-        return <AssistantItem key={key} blocks={it.blocks} loadImage={loadImage} fileMentions={fileMentionsFor(it)} labels={mdLabels} />
+        return <AssistantItem key={key} blocks={it.blocks} loadImage={loadImage} fileMentions={fileMentionsFor(it)} labels={mdLabels} pathImages={pathImages} />
       }
       if (it.kind === 'error') {
         return <div key={key} className="fm-msg fm-error">{it.text}</div>
@@ -993,7 +1021,7 @@ function FocusContent(props: any) {
       if (rendered) kids.push(rendered)
     }
     if (partialBlocks.length) {
-      kids.push(<AssistantItem key="fm-partial" blocks={partialBlocks} loadImage={loadImage} fileMentions={undefined} labels={mdLabels} />)
+      kids.push(<AssistantItem key="fm-partial" blocks={partialBlocks} loadImage={loadImage} fileMentions={undefined} labels={mdLabels} pathImages={pathImages} />)
     }
     if (running) {
       kids.push(
